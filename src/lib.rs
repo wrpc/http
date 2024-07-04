@@ -859,7 +859,7 @@ where
 pub trait InvokeIncomingHandler: wrpc_transport::Invoke {
     #[cfg(feature = "http-body")]
     #[tracing::instrument(level = "trace", skip_all)]
-    fn invoke_handle_http<'a, E>(
+    fn invoke_handle_http<E>(
         &self,
         cx: Self::Context,
         request: http::Request<
@@ -899,12 +899,12 @@ pub trait InvokeIncomingHandler: wrpc_transport::Invoke {
 
 impl<T: wrpc_transport::Invoke> InvokeIncomingHandler for T {}
 
-pub trait InvokeOutgoingHandler {
+pub trait InvokeOutgoingHandler: wrpc_transport::Invoke {
     #[cfg(feature = "wasmtime-wasi-http")]
     #[tracing::instrument(level = "trace", skip_all)]
-    fn invoke_handle_wasmtime<I: wrpc_transport::Invoke>(
-        clt: &I,
-        cx: I::Context,
+    fn invoke_handle_wasmtime(
+        &self,
+        cx: Self::Context,
         request: wasmtime_wasi_http::types::HostOutgoingRequest,
         options: wasmtime_wasi_http::types::OutgoingRequestConfig,
     ) -> impl core::future::Future<
@@ -918,14 +918,17 @@ pub trait InvokeOutgoingHandler {
             >,
             Option<impl core::future::Future<Output = anyhow::Result<()>>>,
         )>,
-    > {
+    >
+    where
+        Self: Sized,
+    {
         use anyhow::Context as _;
 
         let between_bytes_timeout = options.between_bytes_timeout;
         async {
             let (req, opts, errors) = try_wasmtime_to_outgoing_request(request, options)?;
             let (resp, io) =
-                bindings::wrpc::http::outgoing_handler::handle(clt, cx, req, Some(opts))
+                bindings::wrpc::http::outgoing_handler::handle(self, cx, req, Some(opts))
                     .await
                     .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
             match resp {
