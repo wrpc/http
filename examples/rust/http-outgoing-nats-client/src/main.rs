@@ -2,7 +2,7 @@ use core::str;
 
 use anyhow::{bail, Context as _};
 use clap::Parser;
-use futures::stream::{self, TryStreamExt as _};
+use futures::stream::{self, StreamExt as _, TryStreamExt as _};
 use http::uri::Uri;
 use tokio::io::{stdout, AsyncWriteExt as _};
 use tokio::sync::mpsc;
@@ -10,7 +10,7 @@ use tokio::try_join;
 use tracing::debug;
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
-use wrpc_interface_http::{OutgoingHandler as _, Request, Response};
+use wrpc_interface_http::bindings::wrpc::http::types::{Request, Response};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -51,27 +51,28 @@ async fn main() -> anyhow::Result<()> {
     let nats = connect(nats)
         .await
         .context("failed to connect to NATS.io")?;
-    let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix);
+    let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix, None);
     let path = url.path();
-    let (res, tx) = wrpc
-        .invoke_handle(
-            Request {
-                body: stream::empty(),
-                trailers: async { None },
-                method: (&method).into(),
-                path_with_query: Some(if let Some(query) = url.query() {
-                    format!("{path}?{query}")
-                } else {
-                    path.to_string()
-                }),
-                scheme: url.scheme().map(Into::into),
-                authority: url.authority().map(ToString::to_string),
-                headers: vec![],
-            },
-            None,
-        )
-        .await
-        .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
+    let (res, io) = wrpc_interface_http::bindings::wrpc::http::outgoing_handler::handle(
+        &wrpc,
+        None,
+        Request {
+            body: Box::pin(stream::empty()),
+            trailers: Box::pin(async { None }),
+            method: (&method).into(),
+            path_with_query: Some(if let Some(query) = url.query() {
+                format!("{path}?{query}")
+            } else {
+                path.to_string()
+            }),
+            scheme: url.scheme().map(Into::into),
+            authority: url.authority().map(ToString::to_string),
+            headers: vec![],
+        },
+        None,
+    )
+    .await
+    .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
     match res {
         Ok(Response {
             body,
@@ -92,25 +93,29 @@ async fn main() -> anyhow::Result<()> {
             println!();
 
             try_join!(
-                async { tx.await.context("failed to transmit request") },
+                async {
+                    if let Some(io) = io {
+                        io.await.context("failed to complete async I/O")?;
+                    }
+                    anyhow::Ok(())
+                },
                 async {
                     debug!("receiving body");
-                    body.try_for_each(|chunk| async move {
-                        stdout()
-                            .write_all(&chunk)
-                            .await
-                            .context("failed to write body chunk to STDOUT")?;
-                        Ok(())
-                    })
-                    .await
-                    .context("failed to receive response body")?;
+                    body.map(Ok)
+                        .try_for_each(|chunk| async move {
+                            stdout()
+                                .write_all(&chunk)
+                                .await
+                                .context("failed to write body chunk to STDOUT")
+                        })
+                        .await
+                        .context("failed to receive response body")?;
                     debug!("received body");
 
                     println!();
 
                     debug!("receiving trailers");
-                    let trailers = trailers.await.context("failed to receive trailers")?;
-                    if let Some(trailers) = trailers {
+                    if let Some(trailers) = trailers.await {
                         for (trailer, values) in trailers {
                             for value in values {
                                 let value = str::from_utf8(&value).with_context(|| {

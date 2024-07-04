@@ -1,19 +1,18 @@
-use core::pin::pin;
-
-use std::sync::Arc;
+use core::convert::Infallible;
 
 use anyhow::Context as _;
+use bytes::Bytes;
 use clap::Parser;
-use futures::stream::StreamExt as _;
 use http::uri::Uri;
+use http_body_util::{BodyExt as _, StreamBody};
 use hyper_util::rt::TokioExecutor;
-use tokio::{select, signal, spawn, sync::mpsc};
+use tokio::signal;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, instrument, warn};
-use wrpc_interface_http::{
-    try_http_to_outgoing_response, IncomingBody, IncomingFields, IncomingRequestHttp,
-    RequestOptions,
-};
-use wrpc_transport::{AcceptedInvocation, IncomingInputStream, Transmitter};
+use wrpc_interface_http::bindings::exports::wrpc::http::outgoing_handler;
+use wrpc_interface_http::bindings::wrpc::http::types::{ErrorCode, RequestOptions};
+use wrpc_interface_http::{HttpBody, ServeHttp, ServeOutgoingHandlerHttp};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -27,49 +26,59 @@ struct Args {
     prefix: String,
 }
 
-#[instrument(level = "trace", skip_all)]
-async fn serve_handle<Tx: Transmitter>(
-    client: &hyper_util::client::legacy::Client<
+#[derive(Clone)]
+pub struct Handler(
+    hyper_util::client::legacy::Client<
         hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
-        IncomingBody<IncomingInputStream, IncomingFields>,
+        HttpBody,
     >,
-    AcceptedInvocation {
-        params: (IncomingRequestHttp(req), opts),
-        result_subject,
-        transmitter,
-        ..
-    }: AcceptedInvocation<
-        Option<async_nats::HeaderMap>,
-        (IncomingRequestHttp, Option<RequestOptions>),
-        Tx,
-    >,
-) {
-    // TODO: Use opts
-    let _ = opts;
-    debug!(uri = ?req.uri(), "send HTTP request");
-    let res = match client.request(req).await.map(try_http_to_outgoing_response) {
-        Ok(Ok((res, errors))) => {
-            debug!("received HTTP response");
-            // TODO: Handle body errors
-            spawn(errors.for_each(|err| async move { error!(?err, "body error encountered") }));
-            Ok(res)
-        }
-        Ok(Err(err)) => {
-            error!(
-                ?err,
-                "failed to convert `http` response to `wrpc:http` response"
-            );
-            return;
-        }
-        Err(err) => {
-            debug!(?err, "failed to send HTTP request");
-            Err(wrpc_interface_http::ErrorCode::InternalError(Some(
-                err.to_string(),
-            )))
-        }
-    };
-    if let Err(err) = transmitter.transmit_static(result_subject, res).await {
-        error!(?err, "failed to transmit response");
+);
+
+impl ServeOutgoingHandlerHttp<Option<async_nats::HeaderMap>> for Handler {
+    #[instrument(level = "trace", skip_all)]
+    async fn handle(
+        &self,
+        _cx: Option<async_nats::HeaderMap>,
+        request: http::Request<HttpBody>,
+        options: Option<RequestOptions>,
+    ) -> anyhow::Result<
+        Result<
+            http::Response<
+                impl http_body::Body<Data = Bytes, Error = Infallible> + Send + Sync + 'static,
+            >,
+            ErrorCode,
+        >,
+    > {
+        // TODO: Use options
+        let _ = options;
+        debug!(uri = ?request.uri(), "sending HTTP request");
+        let res = self
+            .0
+            .request(request)
+            .await
+            .map_err(|err| ErrorCode::InternalError(Some(err.to_string())))?;
+
+        Ok(Ok(res.map(|mut body| {
+            let (tx, rx) = mpsc::channel(1);
+            // Handle errors encountered while reading the body
+            tokio::spawn(async move {
+                while let Some(frame) = body.frame().await {
+                    match frame {
+                        Ok(frame) => {
+                            if let Err(err) = tx.send(Ok(frame)).await {
+                                error!(?err, "failed to send frame");
+                                return;
+                            }
+                        }
+                        Err(err) => {
+                            error!(?err, "body error encountered");
+                            return;
+                        }
+                    }
+                }
+            });
+            StreamBody::new(ReceiverStream::new(rx))
+        })))
     }
 }
 
@@ -90,6 +99,11 @@ async fn main() -> anyhow::Result<()> {
     let (added, ignored) = ca.add_parsable_certificates(native_roots);
     debug!(added, ignored, "loaded native root certificate store");
     ca.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    let nats = connect(nats)
+        .await
+        .context("failed to connect to NATS.io")?;
+    let nats = wrpc_transport_nats::Client::new(nats, prefix, None);
     let client = hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(
         hyper_rustls::HttpsConnectorBuilder::new()
             .with_tls_config(
@@ -101,45 +115,11 @@ async fn main() -> anyhow::Result<()> {
             .enable_all_versions()
             .build(),
     );
-
-    let nats = connect(nats)
-        .await
-        .context("failed to connect to NATS.io")?;
-    let wrpc = wrpc_transport_nats::Client::new(nats.clone(), prefix);
-
-    let client = Arc::new(client);
-    let mut shutdown = pin!(async { signal::ctrl_c().await.expect("failed to listen for ^C") });
-    'outer: loop {
-        use wrpc_interface_http::OutgoingHandler as _;
-        let handle_invocations = wrpc
-            .serve_handle_http()
-            .await
-            .context("failed to serve `wrpc:http/outgoing-handler.handle` invocations")?;
-        let mut handle_invocations = pin!(handle_invocations);
-        loop {
-            select! {
-                invocation = handle_invocations.next() => {
-                    match invocation {
-                        Some(Ok(invocation)) => {
-                            let client = Arc::clone(&client);
-                            spawn(async move { serve_handle(client.as_ref(), invocation).await });
-                        },
-                        Some(Err(err)) => {
-                            error!(?err, "failed to accept `wrpc:http/outgoing-handler.handle` invocation");
-                        },
-                        None => {
-                            warn!("`wrpc:http/outgoing-handler.handle` stream unexpectedly finished, resubscribe");
-                            continue 'outer
-                        }
-                    }
-                }
-                () = &mut shutdown => {
-                    debug!("^C received, exit");
-                    return Ok(())
-                }
-            }
-        }
-    }
+    outgoing_handler::serve_interface(&nats, ServeHttp(Handler(client)), async {
+        signal::ctrl_c().await.expect("failed to listen for ^C")
+    })
+    .await
+    .context("failed to serve `wrpc:http/outgoing-handler` interface")
 }
 
 /// Connect to NATS.io server and ensure that the connection is fully established before

@@ -1,43 +1,21 @@
-use core::future::Future;
-use core::pin::Pin;
-use core::time::Duration;
-
-use anyhow::{bail, Context as _};
-use async_trait::async_trait;
-use bytes::{Buf, BufMut, Bytes};
-use futures::{Stream, StreamExt as _};
-use tokio::try_join;
-use tracing::instrument;
-use wrpc_transport::{
-    encode_discriminant, receive_discriminant, Acceptor, AsyncSubscription, AsyncValue, Encode,
-    IncomingInputStream, Receive, Subject as _, Subscribe, Subscriber, Value,
-};
-
-pub type Fields = Vec<(String, Vec<Bytes>)>;
-
-pub type IncomingFields = Pin<Box<dyn Future<Output = anyhow::Result<Option<Fields>>> + Send>>;
-
-fn fields_to_wrpc(fields: Vec<(String, Vec<Bytes>)>) -> wrpc_transport::Value {
-    fields
-        .into_iter()
-        .map(|(k, v)| {
-            (
-                k.into(),
-                v.into_iter().map(Into::into).collect::<Vec<_>>().into(),
-            )
-                .into()
-        })
-        .collect::<Vec<_>>()
-        .into()
+pub mod bindings {
+    wit_bindgen_wrpc::generate!({
+        world: "interfaces",
+        generate_all,
+    });
 }
 
 #[cfg(feature = "http")]
-pub fn try_fields_to_header_map(fields: Fields) -> anyhow::Result<http::HeaderMap> {
+pub fn try_fields_to_header_map(
+    fields: bindings::wrpc::http::types::Fields,
+) -> anyhow::Result<http::HeaderMap> {
+    use anyhow::Context as _;
+
     let mut headers = http::HeaderMap::new();
     for (name, values) in fields {
         let name: http::HeaderName = name.parse().context("failed to parse header name")?;
         let http::header::Entry::Vacant(entry) = headers.entry(name) else {
-            bail!("duplicate header entry");
+            anyhow::bail!("duplicate header entry");
         };
         let Some((first, values)) = values.split_first() else {
             continue;
@@ -59,7 +37,11 @@ pub fn try_fields_to_header_map(fields: Fields) -> anyhow::Result<http::HeaderMa
 }
 
 #[cfg(feature = "http")]
-pub fn try_header_map_to_fields(headers: http::HeaderMap) -> anyhow::Result<Fields> {
+pub fn try_header_map_to_fields(
+    headers: http::HeaderMap,
+) -> anyhow::Result<bindings::wrpc::http::types::Fields> {
+    use anyhow::Context as _;
+
     let headers_len = headers.keys_len();
     headers
         .into_iter()
@@ -80,22 +62,8 @@ pub fn try_header_map_to_fields(headers: http::HeaderMap) -> anyhow::Result<Fiel
         .context("failed to construct fields")
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Method {
-    Get,
-    Head,
-    Post,
-    Put,
-    Delete,
-    Connect,
-    Options,
-    Trace,
-    Patch,
-    Other(String),
-}
-
 #[cfg(feature = "http")]
-impl From<&http::Method> for Method {
+impl From<&http::Method> for bindings::wrpc::http::types::Method {
     fn from(method: &http::Method) -> Self {
         match method.as_str() {
             "GET" => Self::Get,
@@ -113,10 +81,12 @@ impl From<&http::Method> for Method {
 }
 
 #[cfg(feature = "http")]
-impl TryFrom<&Method> for http::method::Method {
+impl TryFrom<&bindings::wrpc::http::types::Method> for http::method::Method {
     type Error = http::method::InvalidMethod;
 
-    fn try_from(method: &Method) -> Result<Self, Self::Error> {
+    fn try_from(method: &bindings::wrpc::http::types::Method) -> Result<Self, Self::Error> {
+        use bindings::wrpc::http::types::Method;
+
         match method {
             Method::Get => Ok(Self::GET),
             Method::Head => Ok(Self::HEAD),
@@ -133,7 +103,9 @@ impl TryFrom<&Method> for http::method::Method {
 }
 
 #[cfg(feature = "wasmtime-wasi-http")]
-impl From<wasmtime_wasi_http::bindings::http::types::Method> for Method {
+impl From<wasmtime_wasi_http::bindings::http::types::Method>
+    for bindings::wrpc::http::types::Method
+{
     fn from(method: wasmtime_wasi_http::bindings::http::types::Method) -> Self {
         match method {
             wasmtime_wasi_http::bindings::http::types::Method::Get => Self::Get,
@@ -151,8 +123,12 @@ impl From<wasmtime_wasi_http::bindings::http::types::Method> for Method {
 }
 
 #[cfg(feature = "wasmtime-wasi-http")]
-impl From<Method> for wasmtime_wasi_http::bindings::http::types::Method {
-    fn from(method: Method) -> Self {
+impl From<bindings::wrpc::http::types::Method>
+    for wasmtime_wasi_http::bindings::http::types::Method
+{
+    fn from(method: bindings::wrpc::http::types::Method) -> Self {
+        use bindings::wrpc::http::types::Method;
+
         match method {
             Method::Get => Self::Get,
             Method::Head => Self::Head,
@@ -168,200 +144,64 @@ impl From<Method> for wasmtime_wasi_http::bindings::http::types::Method {
     }
 }
 
-impl Subscribe for Method {}
-
-#[async_trait]
-impl Encode for Method {
-    #[instrument(level = "trace", skip_all)]
-    async fn encode(
-        self,
-        mut payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        match self {
-            Self::Get => {
-                encode_discriminant(payload, 0)?;
-                Ok(None)
-            }
-            Self::Head => {
-                encode_discriminant(payload, 1)?;
-                Ok(None)
-            }
-            Self::Post => {
-                encode_discriminant(payload, 2)?;
-                Ok(None)
-            }
-            Self::Put => {
-                encode_discriminant(payload, 3)?;
-                Ok(None)
-            }
-            Self::Delete => {
-                encode_discriminant(payload, 4)?;
-                Ok(None)
-            }
-            Self::Connect => {
-                encode_discriminant(payload, 5)?;
-                Ok(None)
-            }
-            Self::Options => {
-                encode_discriminant(payload, 6)?;
-                Ok(None)
-            }
-            Self::Trace => {
-                encode_discriminant(payload, 7)?;
-                Ok(None)
-            }
-            Self::Patch => {
-                encode_discriminant(payload, 8)?;
-                Ok(None)
-            }
-            Self::Other(s) => {
-                encode_discriminant(&mut payload, 9)?;
-                s.encode(payload).await
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl<'a> Receive<'a> for Method {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        mut rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        let (discriminant, payload) = receive_discriminant(payload, &mut rx).await?;
-        match discriminant {
-            0 => Ok((Self::Get, payload)),
-            1 => Ok((Self::Head, payload)),
-            2 => Ok((Self::Post, payload)),
-            3 => Ok((Self::Put, payload)),
-            4 => Ok((Self::Delete, payload)),
-            5 => Ok((Self::Connect, payload)),
-            6 => Ok((Self::Options, payload)),
-            7 => Ok((Self::Trace, payload)),
-            8 => Ok((Self::Patch, payload)),
-            9 => {
-                let (s, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::Other(s), payload))
-            }
-            _ => bail!("unknown discriminant `{discriminant}`"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Scheme {
-    HTTP,
-    HTTPS,
-    Other(String),
-}
-
 #[cfg(feature = "http")]
-impl From<&http::uri::Scheme> for Scheme {
+impl From<&http::uri::Scheme> for bindings::wrpc::http::types::Scheme {
     fn from(scheme: &http::uri::Scheme) -> Self {
         match scheme.as_str() {
-            "http" => Self::HTTP,
-            "https" => Self::HTTPS,
+            "http" => Self::Http,
+            "https" => Self::Https,
             _ => Self::Other(scheme.to_string()),
         }
     }
 }
 
 #[cfg(feature = "http")]
-impl TryFrom<&Scheme> for http::uri::Scheme {
+impl TryFrom<&bindings::wrpc::http::types::Scheme> for http::uri::Scheme {
     type Error = http::uri::InvalidUri;
 
-    fn try_from(scheme: &Scheme) -> Result<Self, Self::Error> {
+    fn try_from(scheme: &bindings::wrpc::http::types::Scheme) -> Result<Self, Self::Error> {
+        use bindings::wrpc::http::types::Scheme;
+
         match scheme {
-            Scheme::HTTP => Ok(Self::HTTP),
-            Scheme::HTTPS => Ok(Self::HTTPS),
+            Scheme::Http => Ok(Self::HTTP),
+            Scheme::Https => Ok(Self::HTTPS),
             Scheme::Other(scheme) => scheme.parse(),
         }
     }
 }
 
 #[cfg(feature = "wasmtime-wasi-http")]
-impl From<wasmtime_wasi_http::bindings::http::types::Scheme> for Scheme {
+impl From<wasmtime_wasi_http::bindings::http::types::Scheme>
+    for bindings::wrpc::http::types::Scheme
+{
     fn from(scheme: wasmtime_wasi_http::bindings::http::types::Scheme) -> Self {
         match scheme {
-            wasmtime_wasi_http::bindings::http::types::Scheme::Http => Self::HTTP,
-            wasmtime_wasi_http::bindings::http::types::Scheme::Https => Self::HTTPS,
+            wasmtime_wasi_http::bindings::http::types::Scheme::Http => Self::Http,
+            wasmtime_wasi_http::bindings::http::types::Scheme::Https => Self::Https,
             wasmtime_wasi_http::bindings::http::types::Scheme::Other(other) => Self::Other(other),
         }
     }
 }
 
 #[cfg(feature = "wasmtime-wasi-http")]
-impl From<Scheme> for wasmtime_wasi_http::bindings::http::types::Scheme {
-    fn from(scheme: Scheme) -> Self {
+impl From<bindings::wrpc::http::types::Scheme>
+    for wasmtime_wasi_http::bindings::http::types::Scheme
+{
+    fn from(scheme: bindings::wrpc::http::types::Scheme) -> Self {
+        use bindings::wrpc::http::types::Scheme;
+
         match scheme {
-            Scheme::HTTP => Self::Http,
-            Scheme::HTTPS => Self::Https,
+            Scheme::Http => Self::Http,
+            Scheme::Https => Self::Https,
             Scheme::Other(other) => Self::Other(other),
         }
     }
 }
 
-impl Subscribe for Scheme {}
-
-#[async_trait]
-impl Encode for Scheme {
-    #[instrument(level = "trace", skip_all)]
-    async fn encode(
-        self,
-        mut payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        match self {
-            Self::HTTP => {
-                encode_discriminant(payload, 0)?;
-                Ok(None)
-            }
-            Self::HTTPS => {
-                encode_discriminant(payload, 1)?;
-                Ok(None)
-            }
-            Self::Other(s) => {
-                encode_discriminant(&mut payload, 2)?;
-                s.encode(payload).await
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl<'a> Receive<'a> for Scheme {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        mut rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        let (discriminant, payload) = receive_discriminant(payload, &mut rx).await?;
-        match discriminant {
-            0 => Ok((Self::HTTP, payload)),
-            1 => Ok((Self::HTTPS, payload)),
-            2 => {
-                let (s, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::Other(s), payload))
-            }
-            _ => bail!("unknown discriminant `{discriminant}`"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DnsErrorPayload {
-    pub rcode: Option<String>,
-    pub info_code: Option<u16>,
-}
-
 #[cfg(feature = "wasmtime-wasi-http")]
-impl From<wasmtime_wasi_http::bindings::http::types::DnsErrorPayload> for DnsErrorPayload {
+impl From<wasmtime_wasi_http::bindings::http::types::DnsErrorPayload>
+    for bindings::wasi::http::types::DnsErrorPayload
+{
     fn from(
         wasmtime_wasi_http::bindings::http::types::DnsErrorPayload { rcode, info_code }: wasmtime_wasi_http::bindings::http::types::DnsErrorPayload,
     ) -> Self {
@@ -370,63 +210,19 @@ impl From<wasmtime_wasi_http::bindings::http::types::DnsErrorPayload> for DnsErr
 }
 
 #[cfg(feature = "wasmtime-wasi-http")]
-impl From<DnsErrorPayload> for wasmtime_wasi_http::bindings::http::types::DnsErrorPayload {
-    fn from(DnsErrorPayload { rcode, info_code }: DnsErrorPayload) -> Self {
+impl From<bindings::wasi::http::types::DnsErrorPayload>
+    for wasmtime_wasi_http::bindings::http::types::DnsErrorPayload
+{
+    fn from(
+        bindings::wasi::http::types::DnsErrorPayload { rcode, info_code }: bindings::wasi::http::types::DnsErrorPayload,
+    ) -> Self {
         Self { rcode, info_code }
     }
 }
 
-impl Subscribe for DnsErrorPayload {}
-
-#[async_trait]
-impl Encode for DnsErrorPayload {
-    #[instrument(level = "trace", skip_all)]
-    async fn encode(
-        self,
-        payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        let Self { rcode, info_code } = self;
-        rcode
-            .encode(payload)
-            .await
-            .context("failed to encode `rcode`")?;
-        info_code
-            .encode(payload)
-            .await
-            .context("failed to encode `info_code`")?;
-        Ok(None)
-    }
-}
-
-#[async_trait]
-impl<'a> Receive<'a> for DnsErrorPayload {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        let (rcode, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `rcode`")?;
-        let (info_code, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `info_code`")?;
-        Ok((Self { rcode, info_code }, payload))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TlsAlertReceivedPayload {
-    pub alert_id: Option<u8>,
-    pub alert_message: Option<String>,
-}
-
 #[cfg(feature = "wasmtime-wasi-http")]
 impl From<wasmtime_wasi_http::bindings::http::types::TlsAlertReceivedPayload>
-    for TlsAlertReceivedPayload
+    for bindings::wasi::http::types::TlsAlertReceivedPayload
 {
     fn from(
         wasmtime_wasi_http::bindings::http::types::TlsAlertReceivedPayload {
@@ -442,14 +238,14 @@ impl From<wasmtime_wasi_http::bindings::http::types::TlsAlertReceivedPayload>
 }
 
 #[cfg(feature = "wasmtime-wasi-http")]
-impl From<TlsAlertReceivedPayload>
+impl From<bindings::wasi::http::types::TlsAlertReceivedPayload>
     for wasmtime_wasi_http::bindings::http::types::TlsAlertReceivedPayload
 {
     fn from(
-        TlsAlertReceivedPayload {
+        bindings::wasi::http::types::TlsAlertReceivedPayload {
             alert_id,
             alert_message,
-        }: TlsAlertReceivedPayload,
+        }: bindings::wasi::http::types::TlsAlertReceivedPayload,
     ) -> Self {
         Self {
             alert_id,
@@ -458,65 +254,10 @@ impl From<TlsAlertReceivedPayload>
     }
 }
 
-impl Subscribe for TlsAlertReceivedPayload {}
-
-#[async_trait]
-impl Encode for TlsAlertReceivedPayload {
-    #[instrument(level = "trace", skip_all)]
-    async fn encode(
-        self,
-        payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        let Self {
-            alert_id,
-            alert_message,
-        } = self;
-        alert_id
-            .encode(payload)
-            .await
-            .context("failed to encode `alert_id`")?;
-        alert_message
-            .encode(payload)
-            .await
-            .context("failed to encode `alert_message`")?;
-        Ok(None)
-    }
-}
-
-#[async_trait]
-impl<'a> Receive<'a> for TlsAlertReceivedPayload {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        let (alert_id, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `alert_id`")?;
-        let (alert_message, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `alert_message`")?;
-        Ok((
-            Self {
-                alert_id,
-                alert_message,
-            },
-            payload,
-        ))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FieldSizePayload {
-    pub field_name: Option<String>,
-    pub field_size: Option<u32>,
-}
-
 #[cfg(feature = "wasmtime-wasi-http")]
-impl From<wasmtime_wasi_http::bindings::http::types::FieldSizePayload> for FieldSizePayload {
+impl From<wasmtime_wasi_http::bindings::http::types::FieldSizePayload>
+    for bindings::wasi::http::types::FieldSizePayload
+{
     fn from(
         wasmtime_wasi_http::bindings::http::types::FieldSizePayload {
             field_name,
@@ -531,12 +272,14 @@ impl From<wasmtime_wasi_http::bindings::http::types::FieldSizePayload> for Field
 }
 
 #[cfg(feature = "wasmtime-wasi-http")]
-impl From<FieldSizePayload> for wasmtime_wasi_http::bindings::http::types::FieldSizePayload {
+impl From<bindings::wasi::http::types::FieldSizePayload>
+    for wasmtime_wasi_http::bindings::http::types::FieldSizePayload
+{
     fn from(
-        FieldSizePayload {
+        bindings::wasi::http::types::FieldSizePayload {
             field_name,
             field_size,
-        }: FieldSizePayload,
+        }: bindings::wasi::http::types::FieldSizePayload,
     ) -> Self {
         Self {
             field_name,
@@ -545,102 +288,10 @@ impl From<FieldSizePayload> for wasmtime_wasi_http::bindings::http::types::Field
     }
 }
 
-impl Subscribe for FieldSizePayload {}
-
-#[async_trait]
-impl Encode for FieldSizePayload {
-    #[instrument(level = "trace", skip_all)]
-    async fn encode(
-        self,
-        payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        let Self {
-            field_name,
-            field_size,
-        } = self;
-        field_name
-            .encode(payload)
-            .await
-            .context("failed to encode `field_name`")?;
-        field_size
-            .encode(payload)
-            .await
-            .context("failed to encode `field_size`")?;
-        Ok(None)
-    }
-}
-
-#[async_trait]
-impl<'a> Receive<'a> for FieldSizePayload {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        let (field_name, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `field_name`")?;
-        let (field_size, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `field_size`")?;
-        Ok((
-            Self {
-                field_name,
-                field_size,
-            },
-            payload,
-        ))
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ErrorCode {
-    DnsTimeout,
-    DnsError(DnsErrorPayload),
-    DestinationNotFound,
-    DestinationUnavailable,
-    DestinationIpProhibited,
-    DestinationIpUnroutable,
-    ConnectionRefused,
-    ConnectionTerminated,
-    ConnectionTimeout,
-    ConnectionReadTimeout,
-    ConnectionWriteTimeout,
-    ConnectionLimitReached,
-    TlsProtocolError,
-    TlsCertificateError,
-    TlsAlertReceived(TlsAlertReceivedPayload),
-    HttpRequestDenied,
-    HttpRequestLengthRequired,
-    HttpRequestBodySize(Option<u64>),
-    HttpRequestMethodInvalid,
-    HttpRequestUriInvalid,
-    HttpRequestUriTooLong,
-    HttpRequestHeaderSectionSize(Option<u32>),
-    HttpRequestHeaderSize(Option<FieldSizePayload>),
-    HttpRequestTrailerSectionSize(Option<u32>),
-    HttpRequestTrailerSize(FieldSizePayload),
-    HttpResponseIncomplete,
-    HttpResponseHeaderSectionSize(Option<u32>),
-    HttpResponseHeaderSize(FieldSizePayload),
-    HttpResponseBodySize(Option<u64>),
-    HttpResponseTrailerSectionSize(Option<u32>),
-    HttpResponseTrailerSize(FieldSizePayload),
-    HttpResponseTransferCoding(Option<String>),
-    HttpResponseContentCoding(Option<String>),
-    HttpResponseTimeout,
-    HttpUpgradeFailed,
-    HttpProtocolError,
-    LoopDetected,
-    ConfigurationError,
-    InternalError(Option<String>),
-}
-
 #[cfg(feature = "wasmtime-wasi-http")]
-impl From<wasmtime_wasi_http::bindings::http::types::ErrorCode> for ErrorCode {
+impl From<wasmtime_wasi_http::bindings::http::types::ErrorCode>
+    for bindings::wasi::http::types::ErrorCode
+{
     fn from(code: wasmtime_wasi_http::bindings::http::types::ErrorCode) -> Self {
         use wasmtime_wasi_http::bindings::http::types;
         match code {
@@ -708,8 +359,12 @@ impl From<wasmtime_wasi_http::bindings::http::types::ErrorCode> for ErrorCode {
 }
 
 #[cfg(feature = "wasmtime-wasi-http")]
-impl From<ErrorCode> for wasmtime_wasi_http::bindings::http::types::ErrorCode {
-    fn from(code: ErrorCode) -> Self {
+impl From<bindings::wasi::http::types::ErrorCode>
+    for wasmtime_wasi_http::bindings::http::types::ErrorCode
+{
+    fn from(code: bindings::wasi::http::types::ErrorCode) -> Self {
+        use bindings::wasi::http::types::ErrorCode;
+
         match code {
             ErrorCode::DnsTimeout => Self::DnsTimeout,
             ErrorCode::DnsError(err) => Self::DnsError(err.into()),
@@ -762,375 +417,38 @@ impl From<ErrorCode> for wasmtime_wasi_http::bindings::http::types::ErrorCode {
     }
 }
 
-impl Subscribe for ErrorCode {}
-
-#[async_trait]
-impl Encode for ErrorCode {
-    #[instrument(level = "trace", skip_all)]
-    async fn encode(
-        self,
-        mut payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        match self {
-            Self::DnsTimeout => {
-                encode_discriminant(payload, 0)?;
-                Ok(None)
-            }
-            Self::DnsError(v) => {
-                encode_discriminant(&mut payload, 1)?;
-                v.encode(payload).await
-            }
-            Self::DestinationNotFound => {
-                encode_discriminant(payload, 2)?;
-                Ok(None)
-            }
-            Self::DestinationUnavailable => {
-                encode_discriminant(payload, 3)?;
-                Ok(None)
-            }
-            Self::DestinationIpProhibited => {
-                encode_discriminant(payload, 4)?;
-                Ok(None)
-            }
-            Self::DestinationIpUnroutable => {
-                encode_discriminant(payload, 5)?;
-                Ok(None)
-            }
-            Self::ConnectionRefused => {
-                encode_discriminant(payload, 6)?;
-                Ok(None)
-            }
-            Self::ConnectionTerminated => {
-                encode_discriminant(payload, 7)?;
-                Ok(None)
-            }
-            Self::ConnectionTimeout => {
-                encode_discriminant(payload, 8)?;
-                Ok(None)
-            }
-            Self::ConnectionReadTimeout => {
-                encode_discriminant(payload, 9)?;
-                Ok(None)
-            }
-            Self::ConnectionWriteTimeout => {
-                encode_discriminant(payload, 10)?;
-                Ok(None)
-            }
-            Self::ConnectionLimitReached => {
-                encode_discriminant(payload, 11)?;
-                Ok(None)
-            }
-            Self::TlsProtocolError => {
-                encode_discriminant(payload, 12)?;
-                Ok(None)
-            }
-            Self::TlsCertificateError => {
-                encode_discriminant(payload, 13)?;
-                Ok(None)
-            }
-            Self::TlsAlertReceived(v) => {
-                encode_discriminant(&mut payload, 14)?;
-                v.encode(payload).await
-            }
-            Self::HttpRequestDenied => {
-                encode_discriminant(&mut payload, 15)?;
-                Ok(None)
-            }
-            Self::HttpRequestLengthRequired => {
-                encode_discriminant(&mut payload, 16)?;
-                Ok(None)
-            }
-            Self::HttpRequestBodySize(v) => {
-                encode_discriminant(&mut payload, 17)?;
-                v.encode(payload).await
-            }
-            Self::HttpRequestMethodInvalid => {
-                encode_discriminant(&mut payload, 18)?;
-                Ok(None)
-            }
-            Self::HttpRequestUriInvalid => {
-                encode_discriminant(&mut payload, 19)?;
-                Ok(None)
-            }
-            Self::HttpRequestUriTooLong => {
-                encode_discriminant(&mut payload, 20)?;
-                Ok(None)
-            }
-            Self::HttpRequestHeaderSectionSize(v) => {
-                encode_discriminant(&mut payload, 21)?;
-                v.encode(payload).await
-            }
-            Self::HttpRequestHeaderSize(v) => {
-                encode_discriminant(&mut payload, 22)?;
-                v.encode(payload).await
-            }
-            Self::HttpRequestTrailerSectionSize(v) => {
-                encode_discriminant(&mut payload, 23)?;
-                v.encode(payload).await
-            }
-            Self::HttpRequestTrailerSize(v) => {
-                encode_discriminant(&mut payload, 24)?;
-                v.encode(payload).await
-            }
-            Self::HttpResponseIncomplete => {
-                encode_discriminant(&mut payload, 25)?;
-                Ok(None)
-            }
-            Self::HttpResponseHeaderSectionSize(v) => {
-                encode_discriminant(&mut payload, 26)?;
-                v.encode(payload).await
-            }
-            Self::HttpResponseHeaderSize(v) => {
-                encode_discriminant(&mut payload, 27)?;
-                v.encode(payload).await
-            }
-            Self::HttpResponseBodySize(v) => {
-                encode_discriminant(&mut payload, 28)?;
-                v.encode(payload).await
-            }
-            Self::HttpResponseTrailerSectionSize(v) => {
-                encode_discriminant(&mut payload, 29)?;
-                v.encode(payload).await
-            }
-            Self::HttpResponseTrailerSize(v) => {
-                encode_discriminant(&mut payload, 30)?;
-                v.encode(payload).await
-            }
-            Self::HttpResponseTransferCoding(v) => {
-                encode_discriminant(&mut payload, 31)?;
-                v.encode(payload).await
-            }
-            Self::HttpResponseContentCoding(v) => {
-                encode_discriminant(&mut payload, 32)?;
-                v.encode(payload).await
-            }
-            Self::HttpResponseTimeout => {
-                encode_discriminant(&mut payload, 33)?;
-                Ok(None)
-            }
-            Self::HttpUpgradeFailed => {
-                encode_discriminant(payload, 34)?;
-                Ok(None)
-            }
-            Self::HttpProtocolError => {
-                encode_discriminant(payload, 35)?;
-                Ok(None)
-            }
-            Self::LoopDetected => {
-                encode_discriminant(payload, 36)?;
-                Ok(None)
-            }
-            Self::ConfigurationError => {
-                encode_discriminant(payload, 37)?;
-                Ok(None)
-            }
-            Self::InternalError(v) => {
-                encode_discriminant(&mut payload, 38)?;
-                v.encode(payload).await
-            }
-        }
-    }
-}
-
-#[async_trait]
-impl<'a> Receive<'a> for ErrorCode {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        mut rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        let (discriminant, payload) = receive_discriminant(payload, &mut rx).await?;
-        match discriminant {
-            0 => Ok((Self::DnsTimeout, payload)),
-            1 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::DnsError(v), payload))
-            }
-            2 => Ok((Self::DestinationNotFound, payload)),
-            3 => Ok((Self::DestinationUnavailable, payload)),
-            4 => Ok((Self::DestinationIpProhibited, payload)),
-            5 => Ok((Self::DestinationIpUnroutable, payload)),
-            6 => Ok((Self::ConnectionRefused, payload)),
-            7 => Ok((Self::ConnectionTerminated, payload)),
-            8 => Ok((Self::ConnectionTimeout, payload)),
-            9 => Ok((Self::ConnectionReadTimeout, payload)),
-            10 => Ok((Self::ConnectionWriteTimeout, payload)),
-            11 => Ok((Self::ConnectionLimitReached, payload)),
-            12 => Ok((Self::TlsProtocolError, payload)),
-            13 => Ok((Self::TlsCertificateError, payload)),
-            14 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::TlsAlertReceived(v), payload))
-            }
-            15 => Ok((Self::HttpRequestDenied, payload)),
-            16 => Ok((Self::HttpRequestLengthRequired, payload)),
-            17 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpRequestBodySize(v), payload))
-            }
-            18 => Ok((Self::HttpRequestMethodInvalid, payload)),
-            19 => Ok((Self::HttpRequestUriInvalid, payload)),
-            20 => Ok((Self::HttpRequestUriTooLong, payload)),
-            21 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpRequestHeaderSectionSize(v), payload))
-            }
-            22 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpRequestHeaderSize(v), payload))
-            }
-            23 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpRequestTrailerSectionSize(v), payload))
-            }
-            24 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpRequestTrailerSize(v), payload))
-            }
-            25 => Ok((Self::HttpResponseIncomplete, payload)),
-            26 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpResponseHeaderSectionSize(v), payload))
-            }
-            27 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpResponseHeaderSize(v), payload))
-            }
-            28 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpResponseBodySize(v), payload))
-            }
-            29 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpResponseTrailerSectionSize(v), payload))
-            }
-            30 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpResponseTrailerSize(v), payload))
-            }
-            31 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpResponseTransferCoding(v), payload))
-            }
-            32 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::HttpResponseContentCoding(v), payload))
-            }
-            33 => Ok((Self::HttpResponseTimeout, payload)),
-            34 => Ok((Self::HttpUpgradeFailed, payload)),
-            35 => Ok((Self::HttpProtocolError, payload)),
-            36 => Ok((Self::LoopDetected, payload)),
-            37 => Ok((Self::ConfigurationError, payload)),
-            38 => {
-                let (v, payload) = Receive::receive_sync(payload, rx).await?;
-                Ok((Self::InternalError(v), payload))
-            }
-            _ => bail!("unknown discriminant `{discriminant}`"),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RequestOptions {
-    pub connect_timeout: Option<Duration>,
-    pub first_byte_timeout: Option<Duration>,
-    pub between_bytes_timeout: Option<Duration>,
-}
-
-impl Subscribe for RequestOptions {}
-
-#[async_trait]
-impl Encode for RequestOptions {
-    #[instrument(level = "trace", skip_all)]
-    async fn encode(
-        self,
-        mut payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        let Self {
-            connect_timeout,
-            first_byte_timeout,
-            between_bytes_timeout,
-        } = self;
-        connect_timeout
-            .encode(&mut payload)
-            .await
-            .context("failed to encode `connect_timeout`")?;
-        first_byte_timeout
-            .encode(&mut payload)
-            .await
-            .context("failed to encode `first_byte_timeout`")?;
-        between_bytes_timeout
-            .encode(payload)
-            .await
-            .context("failed to encode `between_bytes_timeout`")?;
-        Ok(None)
-    }
-}
-
-#[async_trait]
-impl<'a> Receive<'a> for RequestOptions {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        _sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        let (connect_timeout, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `connect_timeout`")?;
-        let (first_byte_timeout, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `first_byte_timeout`")?;
-        let (between_bytes_timeout, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `between_bytes_timeout`")?;
-        Ok((
-            Self {
-                connect_timeout,
-                first_byte_timeout,
-                between_bytes_timeout,
-            },
-            payload,
-        ))
-    }
+#[cfg(feature = "http-body")]
+pub struct HttpBody {
+    pub body: core::pin::Pin<Box<dyn futures::Stream<Item = bytes::Bytes> + Send + Sync>>,
+    pub trailers: core::pin::Pin<
+        Box<
+            dyn core::future::Future<Output = Option<bindings::wrpc::http::types::Fields>>
+                + Send
+                + Sync,
+        >,
+    >,
 }
 
 #[cfg(feature = "http-body")]
-pub struct IncomingBody<Body, Trailers> {
-    pub body: Body,
-    pub trailers: Trailers,
-}
-
-#[cfg(feature = "http-body")]
-impl<Body, Trailers> http_body::Body for IncomingBody<Body, Trailers>
-where
-    Body: Stream<Item = anyhow::Result<Bytes>> + Unpin,
-    Trailers: Future<Output = anyhow::Result<Option<Fields>>> + Unpin,
-{
-    type Data = Bytes;
+impl http_body::Body for HttpBody {
+    type Data = bytes::Bytes;
     type Error = anyhow::Error;
 
     fn poll_frame(
-        mut self: Pin<&mut Self>,
+        mut self: core::pin::Pin<&mut Self>,
         cx: &mut core::task::Context<'_>,
     ) -> core::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        use anyhow::Context as _;
         use core::task::Poll;
-        use futures::FutureExt as _;
+        use futures::{FutureExt as _, StreamExt as _};
 
         match self.body.poll_next_unpin(cx) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(Err(err))) => Poll::Ready(Some(Err(err))),
-            Poll::Ready(Some(Ok(buf))) => Poll::Ready(Some(Ok(http_body::Frame::data(buf)))),
+            Poll::Ready(Some(buf)) => Poll::Ready(Some(Ok(http_body::Frame::data(buf)))),
             Poll::Ready(None) => match self.trailers.poll_unpin(cx) {
                 Poll::Pending => Poll::Pending,
-                Poll::Ready(Err(err)) => Poll::Ready(Some(Err(err))),
-                Poll::Ready(Ok(None)) => Poll::Ready(None),
-                Poll::Ready(Ok(Some(trailers))) => {
+                Poll::Ready(None) => Poll::Ready(None),
+                Poll::Ready(Some(trailers)) => {
                     let trailers = try_fields_to_header_map(trailers)
                         .context("failed to convert trailer fields to header map")?;
                     Poll::Ready(Some(Ok(http_body::Frame::trailers(trailers))))
@@ -1176,12 +494,15 @@ impl<E: core::fmt::Display> core::fmt::Display for HttpBodyError<E> {
 impl<E: core::fmt::Debug + core::fmt::Display> std::error::Error for HttpBodyError<E> {}
 
 #[cfg(feature = "http-body")]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn split_http_body<E>(
-    body: impl http_body::Body<Data = Bytes, Error = E>,
+    body: impl http_body::Body<Data = bytes::Bytes, Error = E>,
 ) -> (
-    impl Stream<Item = Result<Bytes, HttpBodyError<E>>>,
-    impl Future<Output = Option<Fields>>,
+    impl futures::Stream<Item = Result<bytes::Bytes, HttpBodyError<E>>>,
+    impl core::future::Future<Output = Option<bindings::wrpc::http::types::Fields>>,
 ) {
+    use futures::StreamExt as _;
+
     let (trailers_tx, mut trailers_rx) = tokio::sync::mpsc::channel(1);
     let body = http_body_util::BodyStream::new(body).filter_map(move |frame| {
         let trailers_tx = trailers_tx.clone();
@@ -1212,14 +533,16 @@ pub fn split_http_body<E>(
 }
 
 #[cfg(feature = "http-body")]
-#[instrument(level = "trace", skip_all)]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn split_outgoing_http_body<E>(
-    body: impl http_body::Body<Data = Bytes, Error = E>,
+    body: impl http_body::Body<Data = bytes::Bytes, Error = E>,
 ) -> (
-    impl Stream<Item = Bytes>,
-    impl Future<Output = Option<Fields>>,
-    impl Stream<Item = HttpBodyError<E>>,
+    impl futures::Stream<Item = bytes::Bytes>,
+    impl core::future::Future<Output = Option<bindings::wrpc::http::types::Fields>>,
+    impl futures::Stream<Item = HttpBodyError<E>>,
 ) {
+    use futures::StreamExt as _;
+
     let (body, trailers) = split_http_body(body);
     let (errors_tx, errors_rx) = tokio::sync::mpsc::channel(1);
     let body = body.filter_map(move |res| {
@@ -1240,24 +563,12 @@ pub fn split_outgoing_http_body<E>(
     (body, trailers, errors_rx)
 }
 
-pub type IncomingRequest = Request<IncomingInputStream, IncomingFields>;
-
-pub struct Request<Body, Trailers> {
-    pub body: Body,
-    pub trailers: Trailers,
-    pub method: Method,
-    pub path_with_query: Option<String>,
-    pub scheme: Option<Scheme>,
-    pub authority: Option<String>,
-    pub headers: Fields,
-}
-
 #[cfg(feature = "http-body")]
-impl TryFrom<IncomingRequest> for http::Request<IncomingBody<IncomingInputStream, IncomingFields>> {
+impl TryFrom<bindings::wrpc::http::types::Request> for http::Request<HttpBody> {
     type Error = anyhow::Error;
 
     fn try_from(
-        Request {
+        bindings::wrpc::http::types::Request {
             body,
             trailers,
             method,
@@ -1265,8 +576,10 @@ impl TryFrom<IncomingRequest> for http::Request<IncomingBody<IncomingInputStream
             scheme,
             authority,
             headers,
-        }: IncomingRequest,
+        }: bindings::wrpc::http::types::Request,
     ) -> Result<Self, Self::Error> {
+        use anyhow::Context as _;
+
         let uri = http::Uri::builder();
         let uri = if let Some(path_with_query) = path_with_query {
             uri.path_and_query(path_with_query)
@@ -1293,35 +606,32 @@ impl TryFrom<IncomingRequest> for http::Request<IncomingBody<IncomingInputStream
             .context("failed to construct header map")?;
         *req_headers = try_fields_to_header_map(headers)
             .context("failed to convert header fields to header map")?;
-        req.body(IncomingBody { body, trailers })
+        req.body(HttpBody { body, trailers })
             .context("failed to construct request")
     }
 }
 
 #[cfg(feature = "wasmtime-wasi-http")]
-impl TryFrom<IncomingRequest> for http::Request<wasmtime_wasi_http::body::HyperIncomingBody> {
+impl TryFrom<bindings::wrpc::http::types::Request>
+    for http::Request<
+        http_body_util::combinators::BoxBody<
+            bytes::Bytes,
+            wasmtime_wasi_http::bindings::http::types::ErrorCode,
+        >,
+    >
+{
     type Error = anyhow::Error;
 
-    fn try_from(req: IncomingRequest) -> Result<Self, Self::Error> {
+    fn try_from(req: bindings::wrpc::http::types::Request) -> Result<Self, Self::Error> {
         use http_body_util::BodyExt as _;
-        use wasmtime_wasi_http::body::HyperIncomingBody;
 
-        let req: http::Request<IncomingBody<IncomingInputStream, IncomingFields>> =
-            req.try_into()?;
-        Ok(req.map(|IncomingBody { body, trailers }| {
-            // TODO: Make trailers Sync and remove this
-            let trailers = tokio::spawn(trailers);
-            HyperIncomingBody::new(
-                IncomingBody {
-                    body,
-                    trailers: Box::pin(async { trailers.await.unwrap() }),
-                }
-                .map_err(|err| {
-                    wasmtime_wasi_http::bindings::http::types::ErrorCode::InternalError(Some(
-                        format!("{err:#}"),
-                    ))
-                }),
-            )
+        let req: http::Request<HttpBody> = req.try_into()?;
+        Ok(req.map(|HttpBody { body, trailers }| {
+            http_body_util::combinators::BoxBody::new(HttpBody { body, trailers }.map_err(|err| {
+                wasmtime_wasi_http::bindings::http::types::ErrorCode::InternalError(Some(format!(
+                    "{err:#}"
+                )))
+            }))
         }))
     }
 }
@@ -1330,18 +640,17 @@ impl TryFrom<IncomingRequest> for http::Request<wasmtime_wasi_http::body::HyperI
 /// Values of `path_with_query`, `scheme` and `authority` will be taken from the
 /// request URI
 #[cfg(feature = "http-body")]
-#[instrument(level = "trace", skip_all)]
-pub fn try_http_to_outgoing_request<E>(
-    request: http::Request<impl http_body::Body<Data = Bytes, Error = E> + Send + 'static>,
-) -> anyhow::Result<(
-    Request<
-        impl Stream<Item = Bytes> + Send + 'static,
-        impl Future<Output = Option<Fields>> + Send + 'static,
+#[tracing::instrument(level = "trace", skip_all)]
+pub fn try_http_to_request<E>(
+    request: http::Request<
+        impl http_body::Body<Data = bytes::Bytes, Error = E> + Send + Sync + 'static,
     >,
-    impl Stream<Item = HttpBodyError<E>>,
+) -> anyhow::Result<(
+    bindings::wrpc::http::types::Request,
+    impl futures::Stream<Item = HttpBodyError<E>>,
 )>
 where
-    E: Send + 'static,
+    E: Send + Sync + 'static,
 {
     let (
         http::request::Parts {
@@ -1355,9 +664,9 @@ where
     let headers = try_header_map_to_fields(headers)?;
     let (body, trailers, errors) = split_outgoing_http_body(body);
     Ok((
-        Request {
-            body,
-            trailers,
+        bindings::wrpc::http::types::Request {
+            body: Box::pin(body),
+            trailers: Box::pin(trailers),
             method: method.into(),
             path_with_query: uri.path_and_query().map(ToString::to_string),
             scheme: uri.scheme().map(Into::into),
@@ -1368,11 +677,11 @@ where
     ))
 }
 
-/// Attempt converting [`wasmtime_wasi_http::types::HostOutgoingRequest`] to [`Request`].
+/// Attempt converting [`wasmtime_wasi_http::types::HostOutgoingRequest`] to [`bindings::wrpc::http::types::Request`].
 /// Values of `path_with_query`, `scheme` and `authority` will be taken from the
 /// request URI.
 #[cfg(feature = "wasmtime-wasi-http")]
-#[instrument(level = "trace", skip_all)]
+#[tracing::instrument(level = "trace", skip_all)]
 pub fn try_wasmtime_to_outgoing_request(
     wasmtime_wasi_http::types::HostOutgoingRequest {
         method,
@@ -1389,30 +698,46 @@ pub fn try_wasmtime_to_outgoing_request(
         between_bytes_timeout,
     }: wasmtime_wasi_http::types::OutgoingRequestConfig,
 ) -> anyhow::Result<(
-    Request<
-        impl Stream<Item = Bytes> + Send + 'static,
-        impl Future<Output = Option<Fields>> + Send + 'static,
-    >,
-    RequestOptions,
-    impl Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>> + Send,
+    bindings::wrpc::http::types::Request,
+    bindings::wrpc::http::types::RequestOptions,
+    impl futures::Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>
+        + Send,
 )> {
+    use anyhow::Context as _;
+
     let headers = try_header_map_to_fields(headers)?;
     let (body, trailers, errors) = if let Some(body) = body {
         let (body, trailers, errors) = split_outgoing_http_body(body);
         (
-            Box::pin(body) as Pin<Box<dyn Stream<Item = _> + Send + 'static>>,
-            Box::pin(trailers) as Pin<Box<dyn Future<Output = _> + Send + 'static>>,
-            Box::pin(errors) as Pin<Box<dyn Stream<Item = _> + Send>>,
+            Box::pin(body) as core::pin::Pin<Box<dyn futures::Stream<Item = _> + Send + Sync>>,
+            Box::pin(trailers)
+                as core::pin::Pin<Box<dyn core::future::Future<Output = _> + Send + Sync>>,
+            Box::pin(errors) as core::pin::Pin<Box<dyn futures::Stream<Item = _> + Send>>,
         )
     } else {
         (
-            Box::pin(futures::stream::empty()) as Pin<Box<dyn Stream<Item = _> + Send + 'static>>,
-            Box::pin(async { None }) as Pin<Box<dyn Future<Output = _> + Send + 'static>>,
-            Box::pin(futures::stream::empty()) as Pin<Box<dyn Stream<Item = _> + Send>>,
+            Box::pin(futures::stream::empty())
+                as core::pin::Pin<Box<dyn futures::Stream<Item = _> + Send + Sync>>,
+            Box::pin(async { None })
+                as core::pin::Pin<Box<dyn core::future::Future<Output = _> + Send + Sync>>,
+            Box::pin(futures::stream::empty())
+                as core::pin::Pin<Box<dyn futures::Stream<Item = _> + Send>>,
         )
     };
+    let connect_timeout = connect_timeout
+        .as_nanos()
+        .try_into()
+        .context("`connect_timeout` nanoseconds do not fit in u64")?;
+    let first_byte_timeout = first_byte_timeout
+        .as_nanos()
+        .try_into()
+        .context("`first_byte_timeout` nanoseconds do not fit in u64")?;
+    let between_bytes_timeout = between_bytes_timeout
+        .as_nanos()
+        .try_into()
+        .context("`between_bytes_timeout` nanoseconds do not fit in u64")?;
     Ok((
-        Request {
+        bindings::wrpc::http::types::Request {
             body,
             trailers,
             method: method.into(),
@@ -1421,7 +746,7 @@ pub fn try_wasmtime_to_outgoing_request(
             authority,
             headers,
         },
-        RequestOptions {
+        bindings::wrpc::http::types::RequestOptions {
             connect_timeout: Some(connect_timeout),
             first_byte_timeout: Some(first_byte_timeout),
             between_bytes_timeout: Some(between_bytes_timeout),
@@ -1430,274 +755,52 @@ pub fn try_wasmtime_to_outgoing_request(
     ))
 }
 
-#[async_trait]
-impl<Body, Trailers> Encode for Request<Body, Trailers>
-where
-    Body: Stream<Item = Bytes> + Send + 'static,
-    Trailers: Future<Output = Option<Fields>> + Send + 'static,
-{
-    async fn encode(
-        self,
-        mut payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        let Self {
-            body,
-            trailers,
-            method,
-            path_with_query,
-            scheme,
-            authority,
-            headers,
-        } = self;
-        // mark body as pending
-        payload.put_u8(0);
-        // mark trailers as pending
-        payload.put_u8(0);
-        method.encode(&mut payload).await?;
-        path_with_query.encode(&mut payload).await?;
-        scheme.encode(&mut payload).await?;
-        authority.encode(&mut payload).await?;
-        headers.encode(&mut payload).await?;
-        // TODO: Optimize, this wrapping should not be necessary
-        Ok(Some(AsyncValue::Record(vec![
-            Some(AsyncValue::Stream(Box::pin(body.map(|buf| {
-                Ok(buf.into_iter().map(Value::U8).map(Some).collect())
-            })))),
-            Some(AsyncValue::Future(Box::pin(async {
-                let trailers = trailers.await;
-                Ok(Some(trailers.map(fields_to_wrpc).into()))
-            }))),
-        ])))
-    }
-}
-
-impl Subscribe for IncomingRequest {
-    #[instrument(level = "trace", skip_all)]
-    async fn subscribe<T: Subscriber + Send + Sync>(
-        subscriber: &T,
-        subject: T::Subject,
-    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
-        let (body_subscriber, trailers_subscriber) = try_join!(
-            subscriber.subscribe(subject.child(Some(0))),
-            subscriber.subscribe(subject.child(Some(1)))
-        )?;
-        Ok(Some(AsyncSubscription::Record(vec![
-            Some(AsyncSubscription::Stream {
-                subscriber: body_subscriber,
-                nested: None,
-            }),
-            Some(AsyncSubscription::Future {
-                subscriber: trailers_subscriber,
-                nested: None,
-            }),
-        ])))
-    }
-}
-
-#[async_trait]
-impl<'a> Receive<'a> for IncomingRequest {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        let mut sub = sub
-            .map(AsyncSubscription::try_unwrap_record)
-            .transpose()
-            .context("stream subscription type mismatch")?;
-        let (body, payload) = Receive::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(0))
-                .and_then(Option::take),
-        )
-        .await
-        .context("failed to receive `body`")?;
-        let (trailers, payload) = Receive::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(1))
-                .and_then(Option::take),
-        )
-        .await
-        .context("failed to receive `trailers`")?;
-        let (method, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `method`")?;
-        let (path_with_query, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `path_with_query`")?;
-        let (scheme, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `scheme`")?;
-        let (authority, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `authority`")?;
-        let (headers, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `headers`")?;
-        Ok((
-            Self {
-                body,
-                trailers,
-                method,
-                path_with_query,
-                scheme,
-                authority,
-                headers,
-            },
-            payload,
-        ))
-    }
-}
-
-/// `http` incoming HTTP request wrapper
 #[cfg(feature = "http-body")]
-pub struct IncomingRequestHttp(
-    pub http::Request<IncomingBody<IncomingInputStream, IncomingFields>>,
-);
-
-#[cfg(feature = "http-body")]
-impl From<IncomingRequestHttp>
-    for http::Request<IncomingBody<IncomingInputStream, IncomingFields>>
-{
-    fn from(IncomingRequestHttp(req): IncomingRequestHttp) -> Self {
-        req
-    }
-}
-
-#[cfg(feature = "http-body")]
-#[async_trait]
-impl<'a> Receive<'a> for IncomingRequestHttp {
-    #[instrument(level = "trace", skip_all)]
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        // TODO: Optimize by directly receiving `http` values
-        let (req, payload) = IncomingRequest::receive(payload, rx, sub)
-            .await
-            .context("failed to receive request `wrpc:http` request")?;
-        let req = req
-            .try_into()
-            .context("failed to convert `wrpc:http` request to `http`")?;
-        Ok((Self(req), payload))
-    }
-}
-
-#[cfg(feature = "http-body")]
-impl Subscribe for IncomingRequestHttp {
-    #[instrument(level = "trace", skip_all)]
-    async fn subscribe<T: Subscriber + Send + Sync>(
-        subscriber: &T,
-        subject: T::Subject,
-    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
-        IncomingRequest::subscribe(subscriber, subject).await
-    }
-}
-
-/// Wasmtime incoming HTTP request wrapper
-#[cfg(feature = "wasmtime-wasi-http")]
-pub struct IncomingRequestWasmtime(pub http::Request<wasmtime_wasi_http::body::HyperIncomingBody>);
-
-#[cfg(feature = "wasmtime-wasi-http")]
-impl From<IncomingRequestWasmtime> for http::Request<wasmtime_wasi_http::body::HyperIncomingBody> {
-    fn from(IncomingRequestWasmtime(req): IncomingRequestWasmtime) -> Self {
-        req
-    }
-}
-
-#[cfg(feature = "wasmtime-wasi-http")]
-#[async_trait]
-impl<'a> Receive<'a> for IncomingRequestWasmtime {
-    #[instrument(level = "trace", skip_all)]
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        // TODO: Optimize by directly receiving `http` values
-        let (req, payload) = IncomingRequest::receive(payload, rx, sub)
-            .await
-            .context("failed to receive request `wrpc:http` request")?;
-        let req = req
-            .try_into()
-            .context("failed to convert `wrpc:http` request to Wasmtime `wasi:http`")?;
-        Ok((Self(req), payload))
-    }
-}
-
-#[cfg(feature = "wasmtime-wasi-http")]
-impl Subscribe for IncomingRequestWasmtime {
-    #[instrument(level = "trace", skip_all)]
-    async fn subscribe<T: Subscriber + Send + Sync>(
-        subscriber: &T,
-        subject: T::Subject,
-    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
-        IncomingRequest::subscribe(subscriber, subject).await
-    }
-}
-
-pub type IncomingResponse = Response<IncomingInputStream, IncomingFields>;
-
-pub struct Response<Body, Trailers> {
-    pub body: Body,
-    pub trailers: Trailers,
-    pub status: u16,
-    pub headers: Fields,
-}
-
-#[cfg(feature = "http-body")]
-impl TryFrom<IncomingResponse>
-    for http::Response<IncomingBody<IncomingInputStream, IncomingFields>>
-{
+impl TryFrom<bindings::wrpc::http::types::Response> for http::Response<HttpBody> {
     type Error = anyhow::Error;
 
     fn try_from(
-        Response {
+        bindings::wrpc::http::types::Response {
             body,
             trailers,
             status,
             headers,
-        }: IncomingResponse,
+        }: bindings::wrpc::http::types::Response,
     ) -> Result<Self, Self::Error> {
+        use anyhow::Context as _;
+
         let mut resp = http::Response::builder().status(status);
         let resp_headers = resp
             .headers_mut()
             .context("failed to construct header map")?;
         *resp_headers = try_fields_to_header_map(headers)
             .context("failed to convert header fields to header map")?;
-        resp.body(IncomingBody { body, trailers })
+        resp.body(HttpBody { body, trailers })
             .context("failed to construct response")
     }
 }
 
 #[cfg(feature = "wasmtime-wasi-http")]
-impl TryFrom<IncomingResponse> for http::Response<wasmtime_wasi_http::body::HyperIncomingBody> {
+impl TryFrom<bindings::wrpc::http::types::Response>
+    for http::Response<
+        http_body_util::combinators::BoxBody<
+            bytes::Bytes,
+            wasmtime_wasi_http::bindings::http::types::ErrorCode,
+        >,
+    >
+{
     type Error = anyhow::Error;
 
     fn try_from(
-        Response {
+        bindings::wrpc::http::types::Response {
             body,
             trailers,
             status,
             headers,
-        }: IncomingResponse,
+        }: bindings::wrpc::http::types::Response,
     ) -> Result<Self, Self::Error> {
+        use anyhow::Context as _;
         use http_body_util::BodyExt as _;
-        use wasmtime_wasi_http::body::HyperIncomingBody;
 
         let mut resp = http::Response::builder().status(status);
         let resp_headers = resp
@@ -1705,10 +808,9 @@ impl TryFrom<IncomingResponse> for http::Response<wasmtime_wasi_http::body::Hype
             .context("failed to construct header map")?;
         *resp_headers = try_fields_to_header_map(headers)
             .context("failed to convert header fields to header map")?;
-        // TODO: Make trailers Sync and remove this
         let trailers = tokio::spawn(trailers);
-        resp.body(HyperIncomingBody::new(
-            IncomingBody {
+        resp.body(http_body_util::combinators::BoxBody::new(
+            HttpBody {
                 body,
                 trailers: Box::pin(async { trailers.await.unwrap() }),
             }
@@ -1723,18 +825,17 @@ impl TryFrom<IncomingResponse> for http::Response<wasmtime_wasi_http::body::Hype
 }
 
 #[cfg(feature = "http-body")]
-#[instrument(level = "trace", skip_all)]
-pub fn try_http_to_outgoing_response<E>(
-    response: http::Response<impl http_body::Body<Data = Bytes, Error = E> + Send + 'static>,
-) -> anyhow::Result<(
-    Response<
-        impl Stream<Item = Bytes> + Send + 'static,
-        impl Future<Output = Option<Fields>> + Send + 'static,
+#[tracing::instrument(level = "trace", skip_all)]
+pub fn try_http_to_response<E>(
+    response: http::Response<
+        impl http_body::Body<Data = bytes::Bytes, Error = E> + Send + Sync + 'static,
     >,
-    impl Stream<Item = HttpBodyError<E>>,
+) -> anyhow::Result<(
+    bindings::wrpc::http::types::Response,
+    impl futures::Stream<Item = HttpBodyError<E>>,
 )>
 where
-    E: Send + 'static,
+    E: Send + Sync + 'static,
 {
     let (
         http::response::Parts {
@@ -1745,9 +846,9 @@ where
     let headers = try_header_map_to_fields(headers)?;
     let (body, trailers, errors) = split_outgoing_http_body(body);
     Ok((
-        Response {
-            body,
-            trailers,
+        bindings::wrpc::http::types::Response {
+            body: Box::pin(body),
+            trailers: Box::pin(trailers),
             status: status.into(),
             headers,
         },
@@ -1755,307 +856,266 @@ where
     ))
 }
 
-#[async_trait]
-impl<Body, Trailers> Encode for Response<Body, Trailers>
-where
-    Body: Stream<Item = Bytes> + Send + 'static,
-    Trailers: Future<Output = Option<Fields>> + Send + 'static,
-{
-    async fn encode(
-        self,
-        mut payload: &mut (impl BufMut + Send),
-    ) -> anyhow::Result<Option<AsyncValue>> {
-        let Self {
-            body,
-            trailers,
-            status,
-            headers,
-        } = self;
-        // mark body as pending
-        payload.put_u8(0);
-        // mark trailers as pending
-        payload.put_u8(0);
-        status.encode(&mut payload).await?;
-        headers.encode(&mut payload).await?;
-        // TODO: Optimize, this wrapping should not be necessary
-        Ok(Some(AsyncValue::Record(vec![
-            Some(AsyncValue::Stream(Box::pin(body.map(|buf| {
-                Ok(buf.into_iter().map(Value::U8).map(Some).collect())
-            })))),
-            Some(AsyncValue::Future(Box::pin(async {
-                let trailers = trailers.await;
-                Ok(Some(trailers.map(fields_to_wrpc).into()))
-            }))),
-        ])))
-    }
-}
-
-impl Subscribe for IncomingResponse {
-    #[instrument(level = "trace", skip_all)]
-    async fn subscribe<T: Subscriber + Send + Sync>(
-        subscriber: &T,
-        subject: T::Subject,
-    ) -> Result<Option<AsyncSubscription<T::Stream>>, T::SubscribeError> {
-        let (body_subscriber, trailers_subscriber) = try_join!(
-            subscriber.subscribe(subject.child(Some(0))),
-            subscriber.subscribe(subject.child(Some(1)))
-        )?;
-        Ok(Some(AsyncSubscription::Record(vec![
-            Some(AsyncSubscription::Stream {
-                subscriber: body_subscriber,
-                nested: None,
-            }),
-            Some(AsyncSubscription::Future {
-                subscriber: trailers_subscriber,
-                nested: None,
-            }),
-        ])))
-    }
-}
-
-#[async_trait]
-impl<'a> Receive<'a> for IncomingResponse {
-    async fn receive<T>(
-        payload: impl Buf + Send + 'a,
-        rx: &mut (impl Stream<Item = anyhow::Result<Bytes>> + Send + Sync + Unpin),
-        sub: Option<AsyncSubscription<T>>,
-    ) -> anyhow::Result<(Self, Box<dyn Buf + Send + 'a>)>
-    where
-        T: Stream<Item = anyhow::Result<Bytes>> + Send + Sync + 'static,
-    {
-        let mut sub = sub
-            .map(AsyncSubscription::try_unwrap_record)
-            .transpose()
-            .context("stream subscription type mismatch")?;
-        let (body, payload) = Receive::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(0))
-                .and_then(Option::take),
-        )
-        .await
-        .context("failed to receive `body`")?;
-        let (trailers, payload) = Receive::receive(
-            payload,
-            rx,
-            sub.as_mut()
-                .and_then(|sub| sub.get_mut(1))
-                .and_then(Option::take),
-        )
-        .await
-        .context("failed to receive `trailers`")?;
-        let (status, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `status`")?;
-        let (headers, payload) = Receive::receive_sync(payload, rx)
-            .await
-            .context("failed to receive `headers`")?;
-        Ok((
-            Self {
-                body,
-                trailers,
-                status,
-                headers,
-            },
-            payload,
-        ))
-    }
-}
-
-pub trait IncomingHandler: wrpc_transport::Client {
-    #[instrument(level = "trace", skip_all)]
-    fn invoke_handle<Body, Trailers>(
-        &self,
-        request: Request<Body, Trailers>,
-    ) -> impl Future<
-        Output = anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>,
-    > + Send
-    where
-        Body: Stream<Item = Bytes> + Send + 'static,
-        Trailers: Future<Output = Option<Fields>> + Send + 'static,
-    {
-        self.invoke_static("wrpc:http/incoming-handler@0.1.0", "handle", request)
-    }
-
+pub trait InvokeIncomingHandler: wrpc_transport::Invoke {
     #[cfg(feature = "http-body")]
-    #[instrument(level = "trace", skip_all)]
-    fn invoke_handle_http<E: Send + 'static>(
+    #[tracing::instrument(level = "trace", skip_all)]
+    fn invoke_handle_http<'a, E>(
         &self,
-        request: http::Request<impl http_body::Body<Data = Bytes, Error = E> + Send + 'static>,
-    ) -> impl Future<
+        cx: Self::Context,
+        request: http::Request<
+            impl http_body::Body<Data = bytes::Bytes, Error = E> + Send + Sync + 'static,
+        >,
+    ) -> impl core::future::Future<
         Output = anyhow::Result<(
-            Result<http::Response<IncomingBody<IncomingInputStream, IncomingFields>>, ErrorCode>,
-            Self::Transmission,
-            impl Stream<Item = HttpBodyError<E>>,
+            Result<http::Response<HttpBody>, bindings::wrpc::http::types::ErrorCode>,
+            impl futures::Stream<Item = HttpBodyError<E>>,
+            Option<impl core::future::Future<Output = anyhow::Result<()>>>,
         )>,
-    > + Send {
+    >
+    where
+        Self: Sized,
+        E: Send + Sync + 'static,
+    {
+        use anyhow::Context as _;
+
         async {
-            let (request, errors) = try_http_to_outgoing_request(request).context(
-                "failed to convert incoming `http` request to outgoing `wrpc:http/types.request`",
-            )?;
-            let (response, tx) = IncomingHandler::invoke_handle(self, request)
+            let (request, errors) = try_http_to_request(request)
+                .context("failed to convert `http` request to `wrpc:http/types.request`")?;
+            let (response, io) = bindings::wrpc::http::incoming_handler::handle(self, cx, request)
                 .await
                 .context("failed to invoke `wrpc:http/incoming-handler.handle`")?;
             match response {
                 Ok(response) => {
                     let response = response.try_into().context(
-                "failed to convert incoming `wrpc:http/types.response` to outgoing `http` response",
-            )?;
-                    Ok((Ok(response), tx, errors))
+                        "failed to convert `wrpc:http/types.response` to `http` response",
+                    )?;
+                    Ok((Ok(response), errors, io))
                 }
-                Err(code) => Ok((Err(code), tx, errors)),
+                Err(code) => Ok((Err(code), errors, io)),
             }
         }
-    }
-
-    #[cfg(feature = "hyper")]
-    #[instrument(level = "trace", skip_all)]
-    fn invoke_handle_hyper(
-        &self,
-        request: hyper::Request<hyper::body::Incoming>,
-    ) -> impl Future<
-        Output = anyhow::Result<(
-            Result<
-                hyper::Response<IncomingBody<IncomingInputStream, IncomingFields>>,
-                anyhow::Error,
-            >,
-            Self::Transmission,
-            impl Stream<Item = HttpBodyError<hyper::Error>>,
-        )>,
-    > + Send {
-        async {
-            let (response, tx, errors) = self.invoke_handle_http(request).await?;
-            match response {
-                Ok(response) => {
-                    let (parts, body) = response.into_parts();
-                    Ok((Ok(hyper::Response::from_parts(parts, body)), tx, errors))
-                }
-                Err(code) => Ok((
-                    Err(anyhow::anyhow!("handler failed with code `{code:?}`")),
-                    tx,
-                    errors,
-                )),
-            }
-        }
-    }
-
-    #[instrument(level = "trace", skip_all)]
-    fn serve_handle(
-        &self,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            Self::InvocationStream<
-                Self::Context,
-                IncomingRequest,
-                <Self::Acceptor as Acceptor>::Transmitter,
-            >,
-        >,
-    > + Send {
-        self.serve_static("wrpc:http/incoming-handler@0.1.0", "handle")
-    }
-
-    #[cfg(feature = "wasmtime-wasi-http")]
-    #[instrument(level = "trace", skip_all)]
-    fn serve_handle_wasmtime(
-        &self,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            Self::InvocationStream<
-                Self::Context,
-                IncomingRequestWasmtime,
-                <Self::Acceptor as Acceptor>::Transmitter,
-            >,
-        >,
-    > + Send {
-        self.serve_static("wrpc:http/incoming-handler@0.1.0", "handle")
     }
 }
 
-impl<T: wrpc_transport::Client> IncomingHandler for T {}
+impl<T: wrpc_transport::Invoke> InvokeIncomingHandler for T {}
 
-pub trait OutgoingHandler: wrpc_transport::Client {
-    #[instrument(level = "trace", skip_all)]
-    fn invoke_handle(
-        &self,
-        request: Request<
-            impl Stream<Item = Bytes> + Send + 'static,
-            impl Future<Output = Option<Fields>> + Send + 'static,
-        >,
-        options: Option<RequestOptions>,
-    ) -> impl Future<
-        Output = anyhow::Result<(Result<IncomingResponse, ErrorCode>, Self::Transmission)>,
-    > + Send {
-        self.invoke_static(
-            "wrpc:http/outgoing-handler@0.1.0",
-            "handle",
-            (request, options),
-        )
-    }
-
+pub trait InvokeOutgoingHandler {
     #[cfg(feature = "wasmtime-wasi-http")]
-    #[instrument(level = "trace", skip_all)]
-    fn invoke_handle_wasmtime(
-        &self,
+    #[tracing::instrument(level = "trace", skip_all)]
+    fn invoke_handle_wasmtime<I: wrpc_transport::Invoke>(
+        clt: &I,
+        cx: I::Context,
         request: wasmtime_wasi_http::types::HostOutgoingRequest,
         options: wasmtime_wasi_http::types::OutgoingRequestConfig,
-    ) -> impl Future<
+    ) -> impl core::future::Future<
         Output = anyhow::Result<(
             Result<
-                http::Response<wasmtime_wasi_http::body::HyperIncomingBody>,
+                http::Response<wasmtime_wasi_http::body::HostIncomingBody>,
                 wasmtime_wasi_http::bindings::http::types::ErrorCode,
             >,
-            impl Stream<Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>>,
-            Self::Transmission,
+            impl futures::Stream<
+                Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>,
+            >,
+            Option<impl core::future::Future<Output = anyhow::Result<()>>>,
         )>,
-    > + Send {
+    > {
+        use anyhow::Context as _;
+
+        let between_bytes_timeout = options.between_bytes_timeout;
         async {
             let (req, opts, errors) = try_wasmtime_to_outgoing_request(request, options)?;
-            let (resp, tx) = OutgoingHandler::invoke_handle(self, req, Some(opts))
-                .await
-                .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
+            let (resp, io) =
+                bindings::wrpc::http::outgoing_handler::handle(clt, cx, req, Some(opts))
+                    .await
+                    .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
             match resp {
                 Ok(resp) => {
-                    let resp = resp.try_into().context(
-                        "failed to convert `wrpc:http` response to Wasmtime `wasi:http`",
-                    )?;
-                    Ok((Ok(resp), errors, tx))
+                    let resp: http::Response<wasmtime_wasi_http::body::HyperIncomingBody> =
+                        resp.try_into().context(
+                            "failed to convert `wrpc:http` response to Wasmtime `wasi:http`",
+                        )?;
+                    Ok((
+                        Ok(resp.map(|resp| {
+                            wasmtime_wasi_http::body::HostIncomingBody::new(
+                                resp,
+                                between_bytes_timeout,
+                            )
+                        })),
+                        errors,
+                        io,
+                    ))
                 }
-                Err(code) => Ok((Err(code.into()), errors, tx)),
+                Err(code) => Ok((Err(code.into()), errors, io)),
             }
         }
     }
+}
 
-    #[instrument(level = "trace", skip_all)]
-    fn serve_handle(
+impl<T: wrpc_transport::Invoke> InvokeOutgoingHandler for T {}
+
+#[cfg(feature = "http-body")]
+#[derive(Copy, Clone, Debug)]
+pub struct ServeHttp<T>(pub T);
+
+#[cfg(feature = "http-body")]
+pub trait ServeIncomingHandlerHttp<Ctx> {
+    fn handle(
         &self,
-    ) -> impl Future<
+        cx: Ctx,
+        request: http::Request<HttpBody>,
+    ) -> impl core::future::Future<
         Output = anyhow::Result<
-            Self::InvocationStream<
-                Self::Context,
-                (IncomingRequest, Option<RequestOptions>),
-                <Self::Acceptor as Acceptor>::Transmitter,
+            Result<
+                http::Response<
+                    impl http_body::Body<Data = bytes::Bytes, Error = core::convert::Infallible>
+                        + Send
+                        + Sync
+                        + 'static,
+                >,
+                bindings::wasi::http::types::ErrorCode,
             >,
         >,
-    > + Send {
-        self.serve_static("wrpc:http/outgoing-handler@0.1.0", "handle")
-    }
+    >;
+}
 
-    #[cfg(feature = "http-body")]
-    #[instrument(level = "trace", skip_all)]
-    fn serve_handle_http(
+#[cfg(feature = "http-body")]
+impl<Ctx, T> bindings::exports::wrpc::http::incoming_handler::Handler<Ctx> for ServeHttp<T>
+where
+    T: ServeIncomingHandlerHttp<Ctx>,
+{
+    async fn handle(
         &self,
-    ) -> impl Future<
-        Output = anyhow::Result<
-            Self::InvocationStream<
-                Self::Context,
-                (IncomingRequestHttp, Option<RequestOptions>),
-                <Self::Acceptor as Acceptor>::Transmitter,
-            >,
-        >,
-    > + Send {
-        self.serve_static("wrpc:http/outgoing-handler@0.1.0", "handle")
+        cx: Ctx,
+        request: bindings::wrpc::http::types::Request,
+    ) -> anyhow::Result<
+        Result<bindings::wrpc::http::types::Response, bindings::wasi::http::types::ErrorCode>,
+    > {
+        use anyhow::Context as _;
+        use futures::StreamExt as _;
+
+        let request = request
+            .try_into()
+            .context("failed to convert incoming `wrpc:http/types.request` to `http` request")?;
+        match ServeIncomingHandlerHttp::handle(&self.0, cx, request).await? {
+            Ok(response) => {
+                let (response, errs) = try_http_to_response(response).context(
+                    "failed to convert outgoing `http` response to `wrpc:http/types.response`",
+                )?;
+                tokio::spawn(errs.for_each_concurrent(None, |err| async move {
+                    tracing::error!(?err, "response body processing error encountered");
+                }));
+                Ok(Ok(response))
+            }
+            Err(code) => Ok(Err(code)),
+        }
     }
 }
 
-impl<T: wrpc_transport::Client> OutgoingHandler for T {}
+#[cfg(feature = "wasmtime-wasi-http")]
+#[derive(Copy, Clone, Debug)]
+pub struct ServeWasmtime<T>(pub T);
+
+#[cfg(feature = "wasmtime-wasi-http")]
+pub trait ServeIncomingHandlerWasmtime<Ctx> {
+    fn handle(
+        &self,
+        cx: Ctx,
+        request: http::Request<wasmtime_wasi_http::body::HyperIncomingBody>,
+    ) -> impl core::future::Future<
+        Output = anyhow::Result<
+            Result<
+                http::Response<wasmtime_wasi_http::body::HyperOutgoingBody>,
+                wasmtime_wasi_http::bindings::http::types::ErrorCode,
+            >,
+        >,
+    >;
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl<Ctx, T> bindings::exports::wrpc::http::incoming_handler::Handler<Ctx> for ServeWasmtime<T>
+where
+    T: ServeIncomingHandlerWasmtime<Ctx>,
+{
+    async fn handle(
+        &self,
+        cx: Ctx,
+        request: bindings::wrpc::http::types::Request,
+    ) -> anyhow::Result<
+        Result<bindings::wrpc::http::types::Response, bindings::wasi::http::types::ErrorCode>,
+    > {
+        use anyhow::Context as _;
+        use futures::StreamExt as _;
+
+        let request = request.try_into().context(
+            "failed to convert incoming `wrpc:http/types.request` to `wasmtime-wasi-http` request",
+        )?;
+        match ServeIncomingHandlerWasmtime::handle(&self.0, cx, request).await? {
+            Ok(response) => {
+                let (response, errs) = try_http_to_response(response).context(
+                    "failed to convert outgoing `http` response to `wrpc:http/types.response`",
+                )?;
+                tokio::spawn(errs.for_each_concurrent(None, |err| async move {
+                    tracing::error!(?err, "response body processing error encountered");
+                }));
+                Ok(Ok(response))
+            }
+            Err(code) => Ok(Err(code.into())),
+        }
+    }
+}
+
+#[cfg(feature = "http-body")]
+pub trait ServeOutgoingHandlerHttp<Ctx> {
+    fn handle(
+        &self,
+        cx: Ctx,
+        request: http::Request<HttpBody>,
+        options: Option<bindings::wrpc::http::types::RequestOptions>,
+    ) -> impl core::future::Future<
+        Output = anyhow::Result<
+            Result<
+                http::Response<
+                    impl http_body::Body<Data = bytes::Bytes, Error = core::convert::Infallible>
+                        + Send
+                        + Sync
+                        + 'static,
+                >,
+                bindings::wasi::http::types::ErrorCode,
+            >,
+        >,
+    >;
+}
+
+#[cfg(feature = "http-body")]
+impl<Ctx, T> bindings::exports::wrpc::http::outgoing_handler::Handler<Ctx> for ServeHttp<T>
+where
+    T: ServeOutgoingHandlerHttp<Ctx>,
+{
+    async fn handle(
+        &self,
+        cx: Ctx,
+        request: bindings::wrpc::http::types::Request,
+        options: Option<bindings::wrpc::http::types::RequestOptions>,
+    ) -> anyhow::Result<
+        Result<bindings::wrpc::http::types::Response, bindings::wasi::http::types::ErrorCode>,
+    > {
+        use anyhow::Context as _;
+        use futures::StreamExt as _;
+
+        let request = request
+            .try_into()
+            .context("failed to convert incoming `wrpc:http/types.request` to `http` request")?;
+        match ServeOutgoingHandlerHttp::handle(&self.0, cx, request, options).await? {
+            Ok(response) => {
+                let (response, errs) = try_http_to_response(response).context(
+                    "failed to convert outgoing `http` response to `wrpc:http/types.response`",
+                )?;
+                tokio::spawn(errs.for_each_concurrent(None, |err| async move {
+                    tracing::error!(?err, "response body processing error encountered");
+                }));
+                Ok(Ok(response))
+            }
+            Err(code) => Ok(Err(code)),
+        }
+    }
+}

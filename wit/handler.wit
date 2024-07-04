@@ -9,3 +9,11 @@ interface outgoing-handler {
 
     handle: func(request: request, options: option<request-options>) -> result<response, error-code>;
 }
+
+world interfaces {
+    import incoming-handler;
+    import outgoing-handler;
+
+    export incoming-handler;
+    export outgoing-handler;
+}
