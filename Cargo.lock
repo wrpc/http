@@ -1841,6 +1841,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61697e0a1c7e512e84a621326239844a24d8207b4669b41bc18b32ea5cbf988b"
 
 [[package]]
+name = "send-future"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "224e328af6e080cddbab3c770b1cf50f0351ba0577091ef2410c3951d835ff87"
+
+[[package]]
 name = "serde"
 version = "1.0.203"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3063,9 +3069,9 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc"
-version = "0.4.2"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50df608d7a3ad8317a263744941f95091acaeff64d669da159f71c9de69fdb97"
+checksum = "5b4f340563f05631ee5e8c91c1d49ecee1d713e936be5e565fbd360f0afc00f2"
 dependencies = [
  "anyhow",
  "bitflags 2.5.0",
@@ -3081,9 +3087,9 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust"
-version = "0.4.2"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b92a6ace83024e40747b0883aa9958ab44c741135a294b248c373a856e042ba9"
+checksum = "cd18a9c5d9d826f19437ae63d5bfcbb85a0623ddf25ff2c6a813ed089f57b3d8"
 dependencies = [
  "anyhow",
  "heck 0.5.0",
@@ -3093,9 +3099,9 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust-macro"
-version = "0.4.2"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2b2304b3832e2183e25268f57ac83f850dbfd53aa400581703ee4a10c2046f2"
+checksum = "b6f32228550a52e39be418c926dc5209a649ed6ba33daae29f4d4fa2f7fd5f49"
 dependencies = [
  "anyhow",
  "prettyplease",
@@ -3156,7 +3162,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-http"
-version = "0.24.2"
+version = "0.24.3"
 dependencies = [
  "anyhow",
  "async-nats-wrpc",
@@ -3190,13 +3196,14 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.26.1"
+version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3b47edf382f8e9df6ef0f4e06c0214e4346ccbfb03e4bbf028171b84bd3e183"
+checksum = "2228fb3c27f3a857ecab26331dff28341ab969dae5f04a6b54826b2131b5ed70"
 dependencies = [
  "anyhow",
  "bytes",
  "futures",
+ "send-future",
  "tokio",
  "tokio-stream",
  "tokio-util",
