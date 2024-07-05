@@ -677,20 +677,13 @@ where
     ))
 }
 
-/// Attempt converting [`wasmtime_wasi_http::types::HostOutgoingRequest`] to [`bindings::wrpc::http::types::Request`].
+/// Attempt converting [`http::Request<wasmtime_wasi_http::body::HyperOutgoingBody>`] to [`bindings::wrpc::http::types::Request`].
 /// Values of `path_with_query`, `scheme` and `authority` will be taken from the
 /// request URI.
 #[cfg(feature = "wasmtime-wasi-http")]
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn try_wasmtime_to_outgoing_request(
-    wasmtime_wasi_http::types::HostOutgoingRequest {
-        method,
-        scheme,
-        authority,
-        path_with_query,
-        headers,
-        body,
-    }: wasmtime_wasi_http::types::HostOutgoingRequest,
+    req: http::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
     wasmtime_wasi_http::types::OutgoingRequestConfig {
         use_tls: _,
         connect_timeout,
@@ -705,25 +698,7 @@ pub fn try_wasmtime_to_outgoing_request(
 )> {
     use anyhow::Context as _;
 
-    let headers = try_header_map_to_fields(headers)?;
-    let (body, trailers, errors) = if let Some(body) = body {
-        let (body, trailers, errors) = split_outgoing_http_body(body);
-        (
-            Box::pin(body) as core::pin::Pin<Box<dyn futures::Stream<Item = _> + Send + Sync>>,
-            Box::pin(trailers)
-                as core::pin::Pin<Box<dyn core::future::Future<Output = _> + Send + Sync>>,
-            Box::pin(errors) as core::pin::Pin<Box<dyn futures::Stream<Item = _> + Send>>,
-        )
-    } else {
-        (
-            Box::pin(futures::stream::empty())
-                as core::pin::Pin<Box<dyn futures::Stream<Item = _> + Send + Sync>>,
-            Box::pin(async { None })
-                as core::pin::Pin<Box<dyn core::future::Future<Output = _> + Send + Sync>>,
-            Box::pin(futures::stream::empty())
-                as core::pin::Pin<Box<dyn futures::Stream<Item = _> + Send>>,
-        )
-    };
+    let (req, errors) = try_http_to_request(req)?;
     let connect_timeout = connect_timeout
         .as_nanos()
         .try_into()
@@ -737,15 +712,7 @@ pub fn try_wasmtime_to_outgoing_request(
         .try_into()
         .context("`between_bytes_timeout` nanoseconds do not fit in u64")?;
     Ok((
-        bindings::wrpc::http::types::Request {
-            body,
-            trailers,
-            method: method.into(),
-            path_with_query,
-            scheme: scheme.map(Into::into),
-            authority,
-            headers,
-        },
+        req,
         bindings::wrpc::http::types::RequestOptions {
             connect_timeout: Some(connect_timeout),
             first_byte_timeout: Some(first_byte_timeout),
@@ -905,7 +872,7 @@ pub trait InvokeOutgoingHandler: wrpc_transport::Invoke {
     fn invoke_handle_wasmtime(
         &self,
         cx: Self::Context,
-        request: wasmtime_wasi_http::types::HostOutgoingRequest,
+        request: http::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
         options: wasmtime_wasi_http::types::OutgoingRequestConfig,
     ) -> impl core::future::Future<
         Output = anyhow::Result<(
