@@ -835,8 +835,8 @@ pub trait InvokeIncomingHandler: wrpc_transport::Invoke {
     ) -> impl core::future::Future<
         Output = anyhow::Result<(
             Result<http::Response<HttpBody>, bindings::wrpc::http::types::ErrorCode>,
-            impl futures::Stream<Item = HttpBodyError<E>>,
-            Option<impl core::future::Future<Output = anyhow::Result<()>>>,
+            impl futures::Stream<Item = HttpBodyError<E>> + 'static,
+            Option<impl core::future::Future<Output = anyhow::Result<()>> + 'static>,
         )>,
     >
     where
@@ -881,9 +881,9 @@ pub trait InvokeOutgoingHandler: wrpc_transport::Invoke {
                 wasmtime_wasi_http::bindings::http::types::ErrorCode,
             >,
             impl futures::Stream<
-                Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>,
-            >,
-            Option<impl core::future::Future<Output = anyhow::Result<()>>>,
+                    Item = HttpBodyError<wasmtime_wasi_http::bindings::http::types::ErrorCode>,
+                > + 'static,
+            Option<impl core::future::Future<Output = anyhow::Result<()>> + 'static>,
         )>,
     >
     where
@@ -1076,6 +1076,47 @@ where
                 Ok(Ok(response))
             }
             Err(code) => Ok(Err(code)),
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(unused)]
+mod tests {
+    struct Handler;
+
+    fn lifetimes_wasmtime<'a>(
+        clt: &'a impl wrpc_transport::Invoke<Context = ()>,
+        request: http::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
+        config: wasmtime_wasi_http::types::OutgoingRequestConfig,
+    ) -> impl core::future::Future<
+        Output = anyhow::Result<(
+            Result<
+                http::Response<wasmtime_wasi_http::body::HyperIncomingBody>,
+                wasmtime_wasi_http::bindings::http::types::ErrorCode,
+            >,
+            tokio::task::JoinHandle<()>,
+        )>,
+    > + Send
+           + wrpc_transport::Captures<'a> {
+        use super::InvokeOutgoingHandler as _;
+        use futures::StreamExt as _;
+
+        async {
+            let (resp, errs, io) = match clt.invoke_handle_wasmtime((), request, config).await? {
+                (Ok(resp), errs, io) => (resp, errs, io),
+                (Err(err), _, _) => anyhow::bail!(err),
+            };
+            let worker = tokio::spawn(async move {
+                tokio::join!(errs.for_each(|err| async move { _ = err }), async move {
+                    if let Some(io) = io {
+                        if let Err(err) = io.await {
+                            _ = err
+                        }
+                    }
+                });
+            });
+            Ok((Ok(resp), worker))
         }
     }
 }
