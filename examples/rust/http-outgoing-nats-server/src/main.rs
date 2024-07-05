@@ -10,6 +10,8 @@ use tokio::signal;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, instrument, warn};
+use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::util::SubscriberInitExt as _;
 use wrpc_interface_http::bindings::exports::wrpc::http::outgoing_handler;
 use wrpc_interface_http::bindings::wrpc::http::types::{ErrorCode, RequestOptions};
 use wrpc_interface_http::{HttpBody, ServeHttp, ServeOutgoingHandlerHttp};
@@ -84,7 +86,13 @@ impl ServeOutgoingHandlerHttp<Option<async_nats::HeaderMap>> for Handler {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().compact().without_time())
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     let Args { nats, prefix } = Args::parse();
 

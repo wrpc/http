@@ -32,7 +32,13 @@ rustls-native-certs = { workspace = true }
 tokio = { workspace = true, features = ["io-std", "rt-multi-thread", "signal"] }
 tokio-stream = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["ansi", "fmt"] }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "smallvec",
+    "tracing-log",
+] }
 webpki-roots = { workspace = true }
 wrpc-interface-http = { workspace = true, features = ["http-body"] }
 wrpc-transport = { workspace = true }
