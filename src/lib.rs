@@ -877,7 +877,7 @@ pub trait InvokeOutgoingHandler: wrpc_transport::Invoke {
     ) -> impl core::future::Future<
         Output = anyhow::Result<(
             Result<
-                http::Response<wasmtime_wasi_http::body::HostIncomingBody>,
+                http::Response<wasmtime_wasi_http::body::HyperIncomingBody>,
                 wasmtime_wasi_http::bindings::http::types::ErrorCode,
             >,
             impl futures::Stream<
@@ -891,7 +891,6 @@ pub trait InvokeOutgoingHandler: wrpc_transport::Invoke {
     {
         use anyhow::Context as _;
 
-        let between_bytes_timeout = options.between_bytes_timeout;
         async {
             let (req, opts, errors) = try_wasmtime_to_outgoing_request(request, options)?;
             let (resp, io) =
@@ -904,16 +903,7 @@ pub trait InvokeOutgoingHandler: wrpc_transport::Invoke {
                         resp.try_into().context(
                             "failed to convert `wrpc:http` response to Wasmtime `wasi:http`",
                         )?;
-                    Ok((
-                        Ok(resp.map(|resp| {
-                            wasmtime_wasi_http::body::HostIncomingBody::new(
-                                resp,
-                                between_bytes_timeout,
-                            )
-                        })),
-                        errors,
-                        io,
-                    ))
+                    Ok((Ok(resp), errors, io))
                 }
                 Err(code) => Ok((Err(code.into()), errors, io)),
             }
