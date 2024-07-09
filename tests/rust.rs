@@ -37,7 +37,6 @@ async fn rust() -> anyhow::Result<()> {
                     hyper::Response<
                         impl http_body::Body<Data = Bytes, Error = core::convert::Infallible>
                             + Send
-                            + Sync
                             + 'static,
                     >,
                     wrpc_interface_http::bindings::wrpc::http::types::ErrorCode,

@@ -419,13 +419,9 @@ impl From<bindings::wasi::http::types::ErrorCode>
 
 #[cfg(feature = "http-body")]
 pub struct HttpBody {
-    pub body: core::pin::Pin<Box<dyn futures::Stream<Item = bytes::Bytes> + Send + Sync>>,
+    pub body: core::pin::Pin<Box<dyn futures::Stream<Item = bytes::Bytes> + Send>>,
     pub trailers: core::pin::Pin<
-        Box<
-            dyn core::future::Future<Output = Option<bindings::wrpc::http::types::Fields>>
-                + Send
-                + Sync,
-        >,
+        Box<dyn core::future::Future<Output = Option<bindings::wrpc::http::types::Fields>> + Send>,
     >,
 }
 
@@ -614,7 +610,7 @@ impl TryFrom<bindings::wrpc::http::types::Request> for http::Request<HttpBody> {
 #[cfg(feature = "wasmtime-wasi-http")]
 impl TryFrom<bindings::wrpc::http::types::Request>
     for http::Request<
-        http_body_util::combinators::BoxBody<
+        http_body_util::combinators::UnsyncBoxBody<
             bytes::Bytes,
             wasmtime_wasi_http::bindings::http::types::ErrorCode,
         >,
@@ -627,11 +623,50 @@ impl TryFrom<bindings::wrpc::http::types::Request>
 
         let req: http::Request<HttpBody> = req.try_into()?;
         Ok(req.map(|HttpBody { body, trailers }| {
-            http_body_util::combinators::BoxBody::new(HttpBody { body, trailers }.map_err(|err| {
-                wasmtime_wasi_http::bindings::http::types::ErrorCode::InternalError(Some(format!(
-                    "{err:#}"
-                )))
-            }))
+            http_body_util::combinators::UnsyncBoxBody::new(HttpBody { body, trailers }.map_err(
+                |err| {
+                    wasmtime_wasi_http::bindings::http::types::ErrorCode::InternalError(Some(
+                        format!("{err:#}"),
+                    ))
+                },
+            ))
+        }))
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+struct SyncBody<D, E>(std::sync::Mutex<http_body_util::combinators::UnsyncBoxBody<D, E>>);
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl<D: bytes::Buf, E> http_body::Body for SyncBody<D, E> {
+    type Data = D;
+    type Error = E;
+
+    fn poll_frame(
+        self: core::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        let mut body = self.0.lock().unwrap();
+        core::pin::pin!(&mut *body).poll_frame(cx)
+    }
+}
+
+#[cfg(feature = "wasmtime-wasi-http")]
+impl TryFrom<bindings::wrpc::http::types::Request>
+    for http::Request<
+        http_body_util::combinators::BoxBody<
+            bytes::Bytes,
+            wasmtime_wasi_http::bindings::http::types::ErrorCode,
+        >,
+    >
+{
+    type Error = anyhow::Error;
+
+    fn try_from(req: bindings::wrpc::http::types::Request) -> Result<Self, Self::Error> {
+        let req: http::Request<http_body_util::combinators::UnsyncBoxBody<_, _>> =
+            req.try_into()?;
+        Ok(req.map(|body| {
+            http_body_util::combinators::BoxBody::new(SyncBody(std::sync::Mutex::new(body)))
         }))
     }
 }
@@ -642,15 +677,13 @@ impl TryFrom<bindings::wrpc::http::types::Request>
 #[cfg(feature = "http-body")]
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn try_http_to_request<E>(
-    request: http::Request<
-        impl http_body::Body<Data = bytes::Bytes, Error = E> + Send + Sync + 'static,
-    >,
+    request: http::Request<impl http_body::Body<Data = bytes::Bytes, Error = E> + Send + 'static>,
 ) -> anyhow::Result<(
     bindings::wrpc::http::types::Request,
     impl futures::Stream<Item = HttpBodyError<E>>,
 )>
 where
-    E: Send + Sync + 'static,
+    E: Send + 'static,
 {
     let (
         http::request::Parts {
@@ -750,7 +783,7 @@ impl TryFrom<bindings::wrpc::http::types::Response> for http::Response<HttpBody>
 #[cfg(feature = "wasmtime-wasi-http")]
 impl TryFrom<bindings::wrpc::http::types::Response>
     for http::Response<
-        http_body_util::combinators::BoxBody<
+        http_body_util::combinators::UnsyncBoxBody<
             bytes::Bytes,
             wasmtime_wasi_http::bindings::http::types::ErrorCode,
         >,
@@ -776,7 +809,7 @@ impl TryFrom<bindings::wrpc::http::types::Response>
         *resp_headers = try_fields_to_header_map(headers)
             .context("failed to convert header fields to header map")?;
         let trailers = tokio::spawn(trailers);
-        resp.body(http_body_util::combinators::BoxBody::new(
+        resp.body(http_body_util::combinators::UnsyncBoxBody::new(
             HttpBody {
                 body,
                 trailers: Box::pin(async { trailers.await.unwrap() }),
@@ -791,18 +824,36 @@ impl TryFrom<bindings::wrpc::http::types::Response>
     }
 }
 
+#[cfg(feature = "wasmtime-wasi-http")]
+impl TryFrom<bindings::wrpc::http::types::Response>
+    for http::Response<
+        http_body_util::combinators::BoxBody<
+            bytes::Bytes,
+            wasmtime_wasi_http::bindings::http::types::ErrorCode,
+        >,
+    >
+{
+    type Error = anyhow::Error;
+
+    fn try_from(resp: bindings::wrpc::http::types::Response) -> Result<Self, Self::Error> {
+        let resp: http::Response<http_body_util::combinators::UnsyncBoxBody<_, _>> =
+            resp.try_into()?;
+        Ok(resp.map(|body| {
+            http_body_util::combinators::BoxBody::new(SyncBody(std::sync::Mutex::new(body)))
+        }))
+    }
+}
+
 #[cfg(feature = "http-body")]
 #[tracing::instrument(level = "trace", skip_all)]
 pub fn try_http_to_response<E>(
-    response: http::Response<
-        impl http_body::Body<Data = bytes::Bytes, Error = E> + Send + Sync + 'static,
-    >,
+    response: http::Response<impl http_body::Body<Data = bytes::Bytes, Error = E> + Send + 'static>,
 ) -> anyhow::Result<(
     bindings::wrpc::http::types::Response,
     impl futures::Stream<Item = HttpBodyError<E>>,
 )>
 where
-    E: Send + Sync + 'static,
+    E: Send + 'static,
 {
     let (
         http::response::Parts {
@@ -830,7 +881,7 @@ pub trait InvokeIncomingHandler: wrpc_transport::Invoke {
         &self,
         cx: Self::Context,
         request: http::Request<
-            impl http_body::Body<Data = bytes::Bytes, Error = E> + Send + Sync + 'static,
+            impl http_body::Body<Data = bytes::Bytes, Error = E> + Send + 'static,
         >,
     ) -> impl core::future::Future<
         Output = anyhow::Result<(
@@ -841,7 +892,7 @@ pub trait InvokeIncomingHandler: wrpc_transport::Invoke {
     >
     where
         Self: Sized,
-        E: Send + Sync + 'static,
+        E: Send + 'static,
     {
         use anyhow::Context as _;
 
@@ -899,10 +950,9 @@ pub trait InvokeOutgoingHandler: wrpc_transport::Invoke {
                     .context("failed to invoke `wrpc:http/outgoing-handler.handle`")?;
             match resp {
                 Ok(resp) => {
-                    let resp: http::Response<wasmtime_wasi_http::body::HyperIncomingBody> =
-                        resp.try_into().context(
-                            "failed to convert `wrpc:http` response to Wasmtime `wasi:http`",
-                        )?;
+                    let resp = resp.try_into().context(
+                        "failed to convert `wrpc:http` response to Wasmtime `wasi:http`",
+                    )?;
                     Ok((Ok(resp), errors, io))
                 }
                 Err(code) => Ok((Err(code.into()), errors, io)),
@@ -929,7 +979,6 @@ pub trait ServeIncomingHandlerHttp<Ctx> {
                 http::Response<
                     impl http_body::Body<Data = bytes::Bytes, Error = core::convert::Infallible>
                         + Send
-                        + Sync
                         + 'static,
                 >,
                 bindings::wasi::http::types::ErrorCode,
@@ -1037,7 +1086,6 @@ pub trait ServeOutgoingHandlerHttp<Ctx> {
                 http::Response<
                     impl http_body::Body<Data = bytes::Bytes, Error = core::convert::Infallible>
                         + Send
-                        + Sync
                         + 'static,
                 >,
                 bindings::wasi::http::types::ErrorCode,
@@ -1085,8 +1133,8 @@ where
 mod tests {
     struct Handler;
 
-    fn lifetimes_wasmtime<'a>(
-        clt: &'a impl wrpc_transport::Invoke<Context = ()>,
+    fn lifetimes_wasmtime(
+        clt: &impl wrpc_transport::Invoke<Context = ()>,
         request: http::Request<wasmtime_wasi_http::body::HyperOutgoingBody>,
         config: wasmtime_wasi_http::types::OutgoingRequestConfig,
     ) -> impl core::future::Future<
@@ -1098,7 +1146,7 @@ mod tests {
             tokio::task::JoinHandle<()>,
         )>,
     > + Send
-           + wrpc_transport::Captures<'a> {
+           + wrpc_transport::Captures<'_> {
         use super::InvokeOutgoingHandler as _;
         use futures::StreamExt as _;
 
@@ -1111,7 +1159,7 @@ mod tests {
                 tokio::join!(errs.for_each(|err| async move { _ = err }), async move {
                     if let Some(io) = io {
                         if let Err(err) = io.await {
-                            _ = err
+                            _ = err;
                         }
                     }
                 });

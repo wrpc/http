@@ -3069,9 +3069,9 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b4f340563f05631ee5e8c91c1d49ecee1d713e936be5e565fbd360f0afc00f2"
+checksum = "d047aafe507a25f1b0b564f46078b5662e6d72aa6c871624f11528c3efc0e13d"
 dependencies = [
  "anyhow",
  "bitflags 2.5.0",
@@ -3087,9 +3087,9 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd18a9c5d9d826f19437ae63d5bfcbb85a0623ddf25ff2c6a813ed089f57b3d8"
+checksum = "8dd593aaee8a2af4ecedb3915f96d7b3a4cd3befcc6ee3fdc3ad5abc0af9b24b"
 dependencies = [
  "anyhow",
  "heck 0.5.0",
@@ -3099,9 +3099,9 @@ dependencies = [
 
 [[package]]
 name = "wit-bindgen-wrpc-rust-macro"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6f32228550a52e39be418c926dc5209a649ed6ba33daae29f4d4fa2f7fd5f49"
+checksum = "3e1294566baeced998cb622738354a8805eb94f8b9149796aa4b675342dbdc93"
 dependencies = [
  "anyhow",
  "prettyplease",
@@ -3162,7 +3162,7 @@ dependencies = [
 
 [[package]]
 name = "wrpc-interface-http"
-version = "0.24.6"
+version = "0.25.0"
 dependencies = [
  "anyhow",
  "async-nats-wrpc",
@@ -3196,9 +3196,9 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport"
-version = "0.26.2"
+version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2228fb3c27f3a857ecab26331dff28341ab969dae5f04a6b54826b2131b5ed70"
+checksum = "15ab57f8983c8a2d46b5fe3faa5b2f8ced8f78d9452dc581fe73d906ea07af09"
 dependencies = [
  "anyhow",
  "bytes",
