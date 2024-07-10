@@ -81,9 +81,7 @@ async fn rust() -> anyhow::Result<()> {
                 wrpc_interface_http::bindings::exports::wrpc::http::incoming_handler::serve_interface(
                 client.as_ref(),
                 ServeHttp(Handler),
-                {
-                    async move { shutdown.notified().await }
-                },
+                    shutdown.notified() ,
             )
             .await
             .context("failed to serve incoming handler")
