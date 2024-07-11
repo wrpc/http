@@ -1,15 +1,17 @@
 use core::convert::Infallible;
+use core::pin::pin;
 
 use anyhow::Context as _;
 use bytes::Bytes;
 use clap::Parser;
+use futures::{StreamExt as _, TryStreamExt as _};
 use http::uri::Uri;
 use http_body_util::{BodyExt as _, StreamBody};
 use hyper_util::rt::TokioExecutor;
-use tokio::signal;
 use tokio::sync::mpsc;
+use tokio::{select, signal};
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{debug, error, instrument, warn};
+use tracing::{debug, error, info, instrument, warn};
 use tracing_subscriber::layer::SubscriberExt as _;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use wrpc_interface_http::bindings::exports::wrpc::http::outgoing_handler;
@@ -45,9 +47,7 @@ impl ServeOutgoingHandlerHttp<Option<async_nats::HeaderMap>> for Handler {
         options: Option<RequestOptions>,
     ) -> anyhow::Result<
         Result<
-            http::Response<
-                impl http_body::Body<Data = Bytes, Error = Infallible> + Send + Sync + 'static,
-            >,
+            http::Response<impl http_body::Body<Data = Bytes, Error = Infallible> + Send + 'static>,
             ErrorCode,
         >,
     > {
@@ -123,11 +123,33 @@ async fn main() -> anyhow::Result<()> {
             .enable_all_versions()
             .build(),
     );
-    outgoing_handler::serve_interface(&nats, ServeHttp(Handler(client)), async {
-        signal::ctrl_c().await.expect("failed to listen for ^C")
-    })
-    .await
-    .context("failed to serve `wrpc:http/outgoing-handler` interface")
+    //async {
+    //        signal::ctrl_c().await.expect("failed to listen for ^C")
+    //    }
+    let [(_, _, invocations)] =
+        outgoing_handler::serve_interface(&nats, ServeHttp(Handler(client)))
+            .await
+            .context("failed to serve `wrpc:http/outgoing-handler` interface")?;
+    let mut invocations = invocations.try_buffer_unordered(16); // handle up to 16 invocations concurrently
+    let shutdown = signal::ctrl_c();
+    let mut shutdown = pin!(shutdown);
+    loop {
+        select! {
+            Some(res) = invocations.next() => {
+                match res {
+                    Ok(()) => {
+                        info!("invocation successfully handled");
+                    }
+                    Err(err) => {
+                        warn!(?err, "failed to accept invocation");
+                    }
+                }
+            }
+            res = &mut shutdown => {
+                return res.context("failed to listen for ^C")
+            }
+        }
+    }
 }
 
 /// Connect to NATS.io server and ensure that the connection is fully established before

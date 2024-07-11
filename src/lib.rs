@@ -984,13 +984,14 @@ pub trait ServeIncomingHandlerHttp<Ctx> {
                 bindings::wasi::http::types::ErrorCode,
             >,
         >,
-    >;
+    > + Send;
 }
 
 #[cfg(feature = "http-body")]
 impl<Ctx, T> bindings::exports::wrpc::http::incoming_handler::Handler<Ctx> for ServeHttp<T>
 where
-    T: ServeIncomingHandlerHttp<Ctx>,
+    T: ServeIncomingHandlerHttp<Ctx> + Sync,
+    Ctx: Send,
 {
     async fn handle(
         &self,
@@ -1037,13 +1038,14 @@ pub trait ServeIncomingHandlerWasmtime<Ctx> {
                 wasmtime_wasi_http::bindings::http::types::ErrorCode,
             >,
         >,
-    >;
+    > + Send;
 }
 
 #[cfg(feature = "wasmtime-wasi-http")]
 impl<Ctx, T> bindings::exports::wrpc::http::incoming_handler::Handler<Ctx> for ServeWasmtime<T>
 where
-    T: ServeIncomingHandlerWasmtime<Ctx>,
+    T: ServeIncomingHandlerWasmtime<Ctx> + Sync,
+    Ctx: Send,
 {
     async fn handle(
         &self,
@@ -1091,13 +1093,14 @@ pub trait ServeOutgoingHandlerHttp<Ctx> {
                 bindings::wasi::http::types::ErrorCode,
             >,
         >,
-    >;
+    > + Send;
 }
 
 #[cfg(feature = "http-body")]
 impl<Ctx, T> bindings::exports::wrpc::http::outgoing_handler::Handler<Ctx> for ServeHttp<T>
 where
-    T: ServeOutgoingHandlerHttp<Ctx>,
+    T: ServeOutgoingHandlerHttp<Ctx> + Sync,
+    Ctx: Send,
 {
     async fn handle(
         &self,

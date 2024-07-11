@@ -6,6 +6,7 @@ use bytes::Bytes;
 use futures::StreamExt as _;
 use http_body_util::BodyExt as _;
 use hyper::Uri;
+use tokio::select;
 use tokio::sync::Notify;
 use tracing::info;
 use wrpc_interface_http::HttpBody;
@@ -78,13 +79,25 @@ async fn rust() -> anyhow::Result<()> {
             let client = Arc::clone(&client);
             let shutdown = Arc::clone(&shutdown);
             async move {
-                wrpc_interface_http::bindings::exports::wrpc::http::incoming_handler::serve_interface(
-                client.as_ref(),
-                ServeHttp(Handler),
-                    shutdown.notified() ,
-            )
-            .await
-            .context("failed to serve incoming handler")
+                let [(instance, name, mut invocations)] = wrpc_interface_http::bindings::exports::wrpc::http::incoming_handler::serve_interface(
+                    client.as_ref(),
+                    ServeHttp(Handler),
+                )
+                .await
+                .context("failed to serve incoming handler")?;
+                assert_eq!(instance, "wrpc:http/incoming-handler@0.1.0");
+                assert_eq!(name, "handle");
+                loop {
+                    select! {
+                        Some(invocation) = invocations.next() => {
+                            let invocation = invocation.expect("failed to accept invocation");
+                            invocation.await.expect("failed to handle invocation")
+                        }
+                        () = shutdown.notified() => {
+                            return anyhow::Ok(())
+                        }
+                    }
+                }
             }
         });
 
