@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-interface-http"
-version = "0.26.0"
+version = "0.27.0"
 description = "wRPC HTTP interface"
 
 authors.workspace = true
@@ -79,9 +79,9 @@ tokio = { version = "1", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
-wasmtime-wasi-http = { version = "23", default-features = false }
+wasmtime-wasi-http = { version = "24", default-features = false }
 webpki-roots = { version = "0.26", default-features = false }
-wit-bindgen-wrpc = { version = "0.4.12", default-features = false }
+wit-bindgen-wrpc = { version = "0.6", default-features = false }
 wrpc-cli = { version = "0.2", default-features = false }
 wrpc-interface-http = { version = "0", path = ".", default-features = false }
 wrpc-transport = { version = "0.26.3", default-features = false }
