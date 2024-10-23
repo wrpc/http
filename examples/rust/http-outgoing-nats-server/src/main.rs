@@ -111,7 +111,9 @@ async fn main() -> anyhow::Result<()> {
     let nats = connect(nats)
         .await
         .context("failed to connect to NATS.io")?;
-    let nats = wrpc_transport_nats::Client::new(nats, prefix, None);
+    let wrpc = wrpc_transport_nats::Client::new(nats, prefix, None)
+        .await
+        .context("failed to construct transport client")?;
     let client = hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(
         hyper_rustls::HttpsConnectorBuilder::new()
             .with_tls_config(
@@ -123,11 +125,8 @@ async fn main() -> anyhow::Result<()> {
             .enable_all_versions()
             .build(),
     );
-    //async {
-    //        signal::ctrl_c().await.expect("failed to listen for ^C")
-    //    }
     let [(_, _, invocations)] =
-        outgoing_handler::serve_interface(&nats, ServeHttp(Handler(client)))
+        outgoing_handler::serve_interface(&wrpc, ServeHttp(Handler(client)))
             .await
             .context("failed to serve `wrpc:http/outgoing-handler` interface")?;
     let mut invocations = invocations.try_buffer_unordered(16); // handle up to 16 invocations concurrently

@@ -26,6 +26,14 @@ http-body = ["http", "dep:http-body", "dep:http-body-util", "dep:tokio-stream"]
 hyper = ["http-body", "dep:hyper"]
 wasmtime-wasi-http = ["http-body", "dep:wasmtime-wasi-http"]
 
+[profile.profiling]
+inherits = "release"
+debug = true
+
+[[bench]]
+name = "bench"
+harness = false
+
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 bytes = { workspace = true }
@@ -34,6 +42,7 @@ http = { workspace = true, optional = true }
 http-body = { workspace = true, optional = true }
 http-body-util = { workspace = true, optional = true }
 hyper = { workspace = true, optional = true }
+pprof = { workspace = true, features = ["protobuf"] }
 tokio = { workspace = true }
 tokio-stream = { workspace = true, optional = true }
 tracing = { workspace = true, features = ["attributes"] }
@@ -43,6 +52,14 @@ wrpc-transport = { workspace = true }
 
 [dev-dependencies]
 async-nats = { workspace = true, features = ["ring"] }
+clap = { workspace = true }
+criterion = { workspace = true, features = [
+    "async_tokio",
+    "cargo_bench_support",
+    "html_reports",
+    "plotters",
+    "rayon",
+] }
 hyper = { workspace = true }
 hyper-util = { workspace = true, features = ["client", "server-auto", "tokio"] }
 tokio = { workspace = true, features = [
@@ -50,6 +67,31 @@ tokio = { workspace = true, features = [
     "process",
     "rt-multi-thread",
 ] }
+url = { workspace = true }
+wasmtime = { workspace = true, features = [
+    "addr2line",
+    "async",
+    "cache",
+    "component-model",
+    "coredump",
+    "cranelift",
+    "gc",
+    "parallel-compilation",
+    "pooling-allocator",
+] }
+wasmtime-cli-flags = { workspace = true, features = [
+    "async",
+    "cache",
+    "component-model",
+    "coredump",
+    "cranelift",
+    "gc",
+    "memory-protection-keys",
+    "parallel-compilation",
+    "pooling-allocator",
+    "threads",
+] }
+wasmtime-wasi = { workspace = true }
 wrpc-cli = { workspace = true, features = ["nats"] }
 wrpc-interface-http = { workspace = true, features = [
     "http",
@@ -57,6 +99,7 @@ wrpc-interface-http = { workspace = true, features = [
     "hyper",
     "wasmtime-wasi-http",
 ] }
+wrpc-test = { workspace = true, features = ["nats"] }
 wrpc-transport-nats = { workspace = true }
 
 [workspace.dependencies]
@@ -64,6 +107,7 @@ anyhow = { version = "1", default-features = false }
 async-nats = { version = "0.37", default-features = false }
 bytes = { version = "1", default-features = false }
 clap = { version = "4", default-features = false }
+criterion = { version = "0.5", default-features = false }
 futures = { version = "0.3", default-features = false }
 http = { version = "1", default-features = false }
 http-body = { version = "1", default-features = false }
@@ -71,6 +115,7 @@ http-body-util = { version = "0.1.2", default-features = false }
 hyper = { version = "1", default-features = false }
 hyper-rustls = { version = "0.27", default-features = false }
 hyper-util = { version = "0.1", default-features = false }
+pprof = { version = "0.13", default-features = false }
 reqwest = { version = "0.11", default-features = false }
 rustls = { version = "0.23", default-features = false }
 rustls-native-certs = { version = "0.7", default-features = false }
@@ -78,11 +123,20 @@ tokio = { version = "1.41", default-features = false }
 tokio-stream = { version = "0.1", default-features = false }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
+url = { version = "2", default-features = false }
+wasi = { version = "0.13", default-features = false }
+wasi-preview1-component-adapter-provider = { version = "25", default-features = false }
+wasmparser = { version = "0.218", default-features = false }
+wasmtime = { version = "25", default-features = false }
+wasmtime-cli-flags = { version = "25", default-features = false }
+wasmtime-wasi = { version = "25", default-features = false }
 wasmtime-wasi-http = { version = "25", default-features = false }
 webpki-roots = { version = "0.26", default-features = false }
 wit-bindgen-wrpc = { version = "0.8", default-features = false }
+wit-component = { version = "0.218", default-features = false }
 wrpc-cli = { version = "0.4", default-features = false }
 wrpc-interface-http = { version = "0", path = ".", default-features = false }
+wrpc-test = { version = "0.1", default-features = false }
 wrpc-transport = { version = "0.28.2", default-features = false }
 wrpc-transport-nats = { version = "0.27", default-features = false, features = [
     "async-nats-0_37",

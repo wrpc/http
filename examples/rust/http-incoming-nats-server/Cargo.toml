@@ -1,0 +1,72 @@
+[package]
+name = "http-incoming-nats-server"
+version = "0.1.0"
+
+authors.workspace = true
+categories.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+async-nats = { workspace = true }
+clap = { workspace = true, features = [
+    "color",
+    "derive",
+    "error-context",
+    "help",
+    "std",
+    "suggestions",
+    "usage",
+] }
+futures = { workspace = true }
+http = { workspace = true, features = ["std"] }
+hyper = { workspace = true, features = ["server"] }
+hyper-util = { workspace = true, features = [
+    "http1",
+    "http2",
+    "server",
+    "tokio",
+] }
+reqwest = { workspace = true, features = ["rustls-tls"] }
+tokio = { workspace = true, features = ["io-std", "rt-multi-thread", "signal"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = [
+    "ansi",
+    "env-filter",
+    "fmt",
+    "smallvec",
+    "tracing-log",
+] }
+url = { workspace = true }
+wasi-preview1-component-adapter-provider = { workspace = true }
+wasmparser = { workspace = true }
+wasmtime = { workspace = true, features = [
+    "addr2line",
+    "async",
+    "cache",
+    "component-model",
+    "coredump",
+    "cranelift",
+    "gc",
+    "parallel-compilation",
+    "pooling-allocator",
+] }
+wasmtime-cli-flags = { workspace = true, features = [
+    "async",
+    "cache",
+    "component-model",
+    "coredump",
+    "cranelift",
+    "gc",
+    "memory-protection-keys",
+    "parallel-compilation",
+    "pooling-allocator",
+    "threads",
+] }
+wasmtime-wasi = { workspace = true }
+wasmtime-wasi-http = { workspace = true }
+wit-component = { workspace = true }
+wrpc-interface-http = { workspace = true, features = ["wasmtime-wasi-http"] }
+wrpc-transport-nats = { workspace = true }

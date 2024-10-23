@@ -1,0 +1,13 @@
+[package]
+name = "incoming"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[workspace]
+
+[dependencies]
+wasi = { version = "0.13", default-features = false, features = ["std"] }
