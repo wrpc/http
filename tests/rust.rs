@@ -21,7 +21,9 @@ async fn rust() -> anyhow::Result<()> {
 
     let (_port, nats_client, nats_server, stop_tx) = start_nats().await?;
 
-    let client = wrpc_transport_nats::Client::new(nats_client, "test-prefix".to_string(), None);
+    let client = wrpc_transport_nats::Client::new(nats_client, "test-prefix".to_string(), None)
+        .await
+        .context("failed to construct client")?;
     let client = Arc::new(client);
 
     {
