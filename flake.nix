@@ -22,7 +22,7 @@
   inputs.nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   inputs.wit-deps.inputs.nixify.follows = "nixify";
   inputs.wit-deps.inputs.nixlib.follows = "nixlib";
-  inputs.wit-deps.url = "github:bytecodealliance/wit-deps/v0.3.5";
+  inputs.wit-deps.url = "github:bytecodealliance/wit-deps/v0.4.0";
   inputs.wrpc.inputs.nixify.follows = "nixify";
   inputs.wrpc.inputs.nixlib.follows = "nixlib";
   inputs.wrpc.url = "github:wrpc/wrpc";
@@ -149,6 +149,7 @@
           extendDerivations {
             buildInputs = [
               pkgs.cargo-audit
+              pkgs.hey
               pkgs.nats-server
               pkgs.natscli
               pkgs.wit-deps
