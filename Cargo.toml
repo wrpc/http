@@ -18,7 +18,7 @@ license = "Apache-2.0 WITH LLVM-exception"
 repository = "https://github.com/wrpc/http"
 
 [workspace]
-members = ["examples/rust/*"]
+members = ["crates/*", "examples/rust/*"]
 
 [features]
 http = ["dep:http"]
