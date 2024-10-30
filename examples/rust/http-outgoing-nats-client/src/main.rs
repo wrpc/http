@@ -20,7 +20,7 @@ struct Args {
     nats: Uri,
 
     /// Prefix to send HTTP request on
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "rust")]
     prefix: String,
 
     /// HTTP method
