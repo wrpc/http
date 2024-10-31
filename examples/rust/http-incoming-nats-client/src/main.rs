@@ -53,10 +53,13 @@ async fn main() -> anyhow::Result<()> {
         SocketAddr::V6(_) => tokio::net::TcpSocket::new_v6()?,
     };
     socket.set_reuseaddr(!cfg!(windows))?;
+    socket.set_nodelay(true)?;
+    socket.set_keepalive(false)?;
     socket.bind(addr)?;
-    let listener = socket.listen(1024)?;
+    let listener = socket.listen(8196)?;
 
-    let srv = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+    let mut srv = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
+    srv.http1().keep_alive(false);
     let srv = Arc::new(srv);
 
     let svc = hyper::service::service_fn(move |req| {
