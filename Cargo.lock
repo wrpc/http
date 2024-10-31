@@ -4214,9 +4214,9 @@ dependencies = [
 
 [[package]]
 name = "wrpc-transport-ants"
-version = "0.1.0-alpha.4"
+version = "0.1.0-alpha.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9e9bec1c4a9f63078fe5cb48ff3602478a3b778f80d9ad75ce69ed8cacb2a2c"
+checksum = "2fea82e27512442db01de8bd24f52dd4a930c8074674704ad77956324a8c1953"
 dependencies = [
  "ants",
  "anyhow",
