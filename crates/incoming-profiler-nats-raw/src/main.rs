@@ -10,6 +10,7 @@ use http::uri::Uri;
 use http_body_util::Full;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use pprof::protos::Message as _;
+use tokio::sync::mpsc;
 use tokio::{select, signal};
 use tracing::{debug, error};
 use tracing_subscriber::layer::SubscriberExt as _;
@@ -41,17 +42,19 @@ struct Args {
 }
 
 async fn handle_request_fast(
-    nats: async_nats::Client,
-    subject: async_nats::Subject,
+    ac: ants::Client,
+    subject: Bytes,
+    inbox: Bytes,
     _request: http::Request<hyper::body::Incoming>,
 ) -> anyhow::Result<http::Response<Full<Bytes>>> {
-    let async_nats::Message {
-        payload, status, ..
-    } = nats
-        .send_request(subject, async_nats::Request::new())
+    let (tx, mut rx) = mpsc::channel(1);
+    ac.subscribe(inbox.clone(), Bytes::default(), inbox.clone(), tx)
         .await
-        .context("failed to send request")?;
-    ensure!(status.is_none());
+        .context("failed to subscribe")?;
+    ac.publish(subject, inbox, Bytes::default(), Bytes::default())
+        .await
+        .context("failed to publish")?;
+    let ants::Message { payload, .. } = rx.recv().await.context("failed to recv")?;
     Ok(http::Response::new(Full::new(payload)))
 }
 
@@ -63,7 +66,7 @@ async fn handle_request_slow(
     let async_nats::Message {
         payload, status, ..
     } = nats
-        .send_request(subject, async_nats::Request::new().inbox(nats.new_inbox()))
+        .send_request(subject, async_nats::Request::new())
         .await
         .context("failed to send request")?;
     ensure!(status.is_none());
@@ -88,11 +91,11 @@ async fn main() -> anyhow::Result<()> {
         fast,
         body,
     } = Args::parse();
-    let handle_request = move |nats, subject, req| async move {
+    let handle_request = move |nats, ac, subject, inbox, req| async move {
         if fast {
-            handle_request_fast(nats, subject, req).await
+            handle_request_fast(ac, Bytes::from(subject), inbox, req).await
         } else {
-            handle_request_slow(nats, subject, req).await
+            handle_request_slow(nats, async_nats::Subject::from(subject), req).await
         }
     };
 
@@ -103,6 +106,15 @@ async fn main() -> anyhow::Result<()> {
         .transpose()
         .context("failed to build profiler")?;
 
+    let (ac, io) = ants::Client::new("127.0.0.1:4222", ants::DefaultConnector)
+        .await
+        .context("failed to connect to NATS.io server")?;
+    tokio::spawn(async move {
+        if let Err(err) = io.await {
+            error!(?err, "connection failed")
+        }
+    });
+
     let nats = async_nats::connect_with_options(
         nats.to_string(),
         async_nats::ConnectOptions::new().retry_on_initial_connect(),
@@ -110,9 +122,7 @@ async fn main() -> anyhow::Result<()> {
     .await
     .context("failed to connect to NATS.io server")?;
 
-    let subject = async_nats::Subject::from(format!(
-        "{prefix}.wrpc.0.0.1.wrpc:http/incoming-handler@0.1.0.handle"
-    ));
+    let subject = format!("{prefix}.wrpc.0.0.1.wrpc:http/incoming-handler@0.1.0.handle");
 
     let mut sub = nats
         .subscribe(subject.clone())
@@ -148,10 +158,12 @@ async fn main() -> anyhow::Result<()> {
                 let (stream, _) = res?;
                 tokio::spawn({
                     let nats = nats.clone();
+                    let ac = ac.clone();
                     let srv = srv.clone();
                     let subject = subject.clone();
+                    let inbox = Bytes::from(nats.new_inbox());
                     async move {
-                        if let Err(err) = srv.serve_connection(TokioIo::new(stream), hyper::service::service_fn(move |req| handle_request(nats.clone(), subject.clone(), req))).await {
+                        if let Err(err) = srv.serve_connection(TokioIo::new(stream), hyper::service::service_fn(move |req| handle_request(nats.clone(), ac.clone(), subject.clone(), inbox.clone(), req))).await {
                             error!(?err, "failed to serve connection");
                         }
                     }

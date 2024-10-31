@@ -118,6 +118,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "ants"
+version = "0.1.0-alpha.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb36d60e7b52fc628ca3bf201426afc33ac3d02a0a1a0e0adf4fdfa263b39eef"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "memchr",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1196,6 +1213,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-incoming-ants-client"
+version = "0.1.0"
+dependencies = [
+ "ants",
+ "anyhow",
+ "bytes",
+ "clap",
+ "futures",
+ "http 1.1.0",
+ "hyper 1.5.0",
+ "hyper-util",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "wrpc-interface-http",
+ "wrpc-transport-ants",
+]
+
+[[package]]
+name = "http-incoming-ants-server"
+version = "0.1.0"
+dependencies = [
+ "ants",
+ "anyhow",
+ "clap",
+ "futures",
+ "http 1.1.0",
+ "hyper 1.5.0",
+ "hyper-util",
+ "reqwest",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "wasi-preview1-component-adapter-provider",
+ "wasmparser 0.218.0",
+ "wasmtime",
+ "wasmtime-cli-flags",
+ "wasmtime-wasi",
+ "wasmtime-wasi-http",
+ "wit-component",
+ "wrpc-interface-http",
+ "wrpc-transport-ants",
+]
+
+[[package]]
 name = "http-incoming-nats-client"
 version = "0.1.0"
 dependencies = [
@@ -1503,6 +1566,7 @@ dependencies = [
 name = "incoming-profiler-nats-raw"
 version = "0.1.0"
 dependencies = [
+ "ants",
  "anyhow",
  "async-nats",
  "bytes",
@@ -4146,6 +4210,25 @@ dependencies = [
  "tracing",
  "wasi 0.13.3+wasi-0.2.2",
  "wasm-tokio",
+]
+
+[[package]]
+name = "wrpc-transport-ants"
+version = "0.1.0-alpha.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9e9bec1c4a9f63078fe5cb48ff3602478a3b778f80d9ad75ce69ed8cacb2a2c"
+dependencies = [
+ "ants",
+ "anyhow",
+ "bytes",
+ "futures",
+ "nuid",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "wasm-tokio",
+ "wrpc-transport",
 ]
 
 [[package]]
