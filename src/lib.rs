@@ -444,6 +444,7 @@ impl http_body::Body for HttpBody {
             Poll::Ready(None) => match self.trailers.poll_unpin(cx) {
                 Poll::Pending => Poll::Pending,
                 Poll::Ready(None) => Poll::Ready(None),
+                Poll::Ready(Some(trailers)) if trailers.is_empty() => Poll::Ready(None),
                 Poll::Ready(Some(trailers)) => {
                     let trailers = try_fields_to_header_map(trailers)
                         .context("failed to convert trailer fields to header map")?;
