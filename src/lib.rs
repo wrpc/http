@@ -1134,6 +1134,14 @@ where
 #[cfg(test)]
 #[allow(unused)]
 mod tests {
+    use core::{pin::pin, time::Duration};
+
+    use futures::StreamExt as _;
+    use http_body_util::BodyExt as _;
+    use tokio::join;
+
+    use super::*;
+
     struct Handler;
 
     fn lifetimes_wasmtime(
@@ -1169,5 +1177,97 @@ mod tests {
             });
             Ok((Ok(resp), worker))
         }
+    }
+
+    #[tokio::test]
+    async fn test_split_http_body() {
+        let (body, trailers) = split_http_body(http_body_util::Empty::new());
+        assert!(pin!(body).next().await.is_none());
+        assert_eq!(trailers.await, None);
+    }
+
+    #[tokio::test]
+    async fn test_split_outgoing_http_body() {
+        let (body, trailers, mut errs) = split_outgoing_http_body(http_body_util::Empty::new());
+        assert_eq!(pin!(body).next().await, None);
+        assert_eq!(trailers.await, None);
+        assert!(errs.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_try_http_to_request() {
+        let (
+            bindings::wrpc::http::types::Request {
+                mut body,
+                mut trailers,
+                method,
+                path_with_query,
+                scheme,
+                authority,
+                headers,
+            },
+            mut errs,
+        ) = try_http_to_request(http::Request::new(http_body_util::Empty::new()))
+            .expect("failed to convert empty request");
+        assert_eq!(pin!(body).next().await, None);
+        assert_eq!(trailers.await, None);
+        assert!(errs.next().await.is_none());
+        assert!(matches!(method, bindings::wrpc::http::types::Method::Get));
+        assert_eq!(path_with_query.as_deref(), Some("/"));
+        assert_eq!(authority, None);
+        assert_eq!(headers, []);
+    }
+
+    #[tokio::test]
+    async fn test_try_wasmtime_to_outgoing_request() {
+        let (
+            bindings::wrpc::http::types::Request {
+                mut body,
+                mut trailers,
+                method,
+                path_with_query,
+                scheme,
+                authority,
+                headers,
+            },
+            bindings::wrpc::http::types::RequestOptions {
+                connect_timeout,
+                first_byte_timeout,
+                between_bytes_timeout,
+            },
+            mut errs,
+        ) = try_wasmtime_to_outgoing_request(
+            http::Request::new(wasmtime_wasi_http::body::HyperOutgoingBody::new(
+                http_body_util::Empty::new().map_err(|_| {
+                    wasmtime_wasi_http::bindings::http::types::ErrorCode::InternalError(None)
+                }),
+            )),
+            wasmtime_wasi_http::types::OutgoingRequestConfig {
+                use_tls: false,
+                connect_timeout: Duration::from_secs(1),
+                first_byte_timeout: Duration::from_secs(2),
+                between_bytes_timeout: Duration::from_secs(3),
+            },
+        )
+        .expect("failed to convert empty request");
+        assert_eq!(pin!(body).next().await, None);
+        assert_eq!(trailers.await, None);
+        assert!(errs.next().await.is_none());
+        assert!(matches!(method, bindings::wrpc::http::types::Method::Get));
+        assert_eq!(path_with_query.as_deref(), Some("/"));
+        assert_eq!(authority, None);
+        assert_eq!(headers, []);
+        assert_eq!(
+            connect_timeout.map(Into::into),
+            Some(Duration::from_secs(1).as_nanos())
+        );
+        assert_eq!(
+            first_byte_timeout.map(Into::into),
+            Some(Duration::from_secs(2).as_nanos())
+        );
+        assert_eq!(
+            between_bytes_timeout.map(Into::into),
+            Some(Duration::from_secs(3).as_nanos())
+        );
     }
 }
