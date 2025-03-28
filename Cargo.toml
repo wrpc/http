@@ -1,6 +1,6 @@
 [package]
 name = "wrpc-interface-http"
-version = "0.31.0"
+version = "0.32.0"
 description = "wRPC HTTP interface"
 
 authors.workspace = true
