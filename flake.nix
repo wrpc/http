@@ -25,7 +25,7 @@
   inputs.wit-deps.url = "github:bytecodealliance/wit-deps/v0.5.0";
   inputs.wrpc.inputs.nixify.follows = "nixify";
   inputs.wrpc.inputs.nixlib.follows = "nixlib";
-  inputs.wrpc.url = "github:wrpc/wrpc";
+  inputs.wrpc.url = "github:wrpc/wrpc/v0.15.0";
 
   outputs = {
     nixify,
