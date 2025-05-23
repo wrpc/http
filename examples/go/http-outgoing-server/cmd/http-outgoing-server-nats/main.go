@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -14,11 +13,11 @@ import (
 	"syscall"
 
 	"github.com/nats-io/nats.go"
-	server "github.com/wrpc/wrpc/examples/go/http-outgoing-server/bindings"
-	wasitypes "github.com/wrpc/wrpc/examples/go/http-outgoing-server/bindings/wasi/http/types"
-	wrpctypes "github.com/wrpc/wrpc/examples/go/http-outgoing-server/bindings/wrpc/http/types"
-	wrpc "github.com/wrpc/wrpc/go"
-	wrpcnats "github.com/wrpc/wrpc/go/nats"
+	wrpc "wrpc.io/go"
+	wrpcnats "wrpc.io/go/nats"
+	server "wrpc.io/http/examples/go/http-outgoing-server/bindings"
+	wasitypes "wrpc.io/http/examples/go/http-outgoing-server/bindings/wasi/http/types"
+	wrpctypes "wrpc.io/http/examples/go/http-outgoing-server/bindings/wrpc/http/types"
 )
 
 type incomingBody struct {
@@ -77,6 +76,10 @@ func (r *outgoingBody) Close() error {
 }
 
 type trailerReceiver <-chan []*wrpc.Tuple2[string, [][]byte]
+
+func (trailerReceiver) Close() error {
+	return nil
+}
 
 func (r trailerReceiver) Receive() ([]*wrpc.Tuple2[string, [][]byte], error) {
 	trailers, ok := <-r
@@ -178,7 +181,7 @@ func (Handler) Handle(ctx context.Context, request *wrpctypes.Request, opts *wrp
 	body := &outgoingBody{body: resp.Body, trailer: resp.Trailer, trailerCh: trailerCh}
 	return &wrpc.Result[wrpctypes.Response, wrpctypes.ErrorCode]{
 		Ok: &wrpctypes.Response{
-			Body:     wrpc.NewPendingByteReader(bufio.NewReader(body)),
+			Body:     body,
 			Trailers: trailerReceiver(trailerCh),
 			Status:   uint16(resp.StatusCode),
 			Headers:  headers,
@@ -202,7 +205,10 @@ func run() (err error) {
 		}
 	}()
 
-	wrpc := wrpcnats.NewClient(nc, "go")
+	wrpc := wrpcnats.NewClient(
+		nc,
+		wrpcnats.WithPrefix("go"),
+	)
 	stop, err := server.Serve(wrpc, Handler{})
 	if err != nil {
 		return fmt.Errorf("failed to serve `server` world: %w", err)

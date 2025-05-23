@@ -10,11 +10,11 @@ import (
 	"os"
 
 	"github.com/nats-io/nats.go"
-	wasitypes "github.com/wrpc/wrpc/examples/go/http-outgoing-client/bindings/wasi/http/types"
-	outgoing_handler "github.com/wrpc/wrpc/examples/go/http-outgoing-client/bindings/wrpc/http/outgoing_handler"
-	wrpctypes "github.com/wrpc/wrpc/examples/go/http-outgoing-client/bindings/wrpc/http/types"
-	wrpc "github.com/wrpc/wrpc/go"
-	wrpcnats "github.com/wrpc/wrpc/go/nats"
+	wrpc "wrpc.io/go"
+	wrpcnats "wrpc.io/go/nats"
+	wasitypes "wrpc.io/http/examples/go/http-outgoing-client/bindings/wasi/http/types"
+	outgoing_handler "wrpc.io/http/examples/go/http-outgoing-client/bindings/wrpc/http/outgoing_handler"
+	wrpctypes "wrpc.io/http/examples/go/http-outgoing-client/bindings/wrpc/http/types"
 )
 
 func run() (err error) {
@@ -33,10 +33,13 @@ func run() (err error) {
 		}
 	}()
 
-	client := wrpcnats.NewClient(nc, "go")
+	client := wrpcnats.NewClient(
+		nc,
+		wrpcnats.WithPrefix("go"),
+	)
 	authority := "google.com"
-	res, stop, err := outgoing_handler.Handle(context.Background(), client, &wrpctypes.Request{
-		Body:      wrpc.NewCompleteReader(bytes.NewBuffer(nil)),
+	res, writeErrs, err := outgoing_handler.Handle(context.Background(), client, &wrpctypes.Request{
+		Body:      io.NopCloser(bytes.NewBuffer(nil)),
 		Trailers:  wrpc.NewCompleteReceiver([]*wrpc.Tuple2[string, [][]uint8](nil)),
 		Method:    wasitypes.NewMethodGet(),
 		Scheme:    wasitypes.NewSchemeHttps(),
@@ -62,8 +65,8 @@ func run() (err error) {
 		return fmt.Errorf("failed to read body: %w", err)
 	}
 	fmt.Println(string(body))
-	if err := stop(); err != nil {
-		return fmt.Errorf("failed to shutdown invocation")
+	for err := range writeErrs {
+		return fmt.Errorf("failed to write invocation: %w", err)
 	}
 	return nil
 }
